@@ -10,6 +10,7 @@ import '../model/channel.dart';
 /// Sidebar order. Categories with no channels are hidden.
 const categoryOrder = [
   'Favorites',
+  'Recent',
   'News',
   'Entertainment',
   'Movies',

@@ -7,11 +7,12 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../model/channel.dart';
 import '../provider/favorites_provider.dart';
+import '../provider/recent_provider.dart';
 import '../widgets/channel_icon.dart';
 import '../widgets/mini_guide.dart';
 import 'home.dart' show isSelectKey;
 
-enum ControlSection { playPause, quality }
+enum ControlSection { playPause, recall, quality }
 
 /// Full-screen live player.
 /// ◀ (Left) opens Mini-Guide, OK toggles Controls Overlay (Play/Pause & Quality switcher),
@@ -128,9 +129,23 @@ class _PlayerState extends State<Player> {
       if (gen != _generation) return;
       startTimer?.cancel();
       await c.play();
+      RecentProvider.instance.add(channel);
       if (mounted) setState(_flashInfo);
     } catch (_) {
       if (gen == _generation) _nextStream(gen);
+    }
+  }
+
+  Channel? get _previousChannel {
+    final prevKey = RecentProvider.instance.getPreviousKey(channel.idKey);
+    if (prevKey == null) return null;
+    try {
+      return allChannels.firstWhere(
+        (c) => c.idKey == prevKey,
+        orElse: () => activeChannels.firstWhere((c) => c.idKey == prevKey),
+      );
+    } catch (_) {
+      return null;
     }
   }
 
@@ -321,6 +336,8 @@ class _PlayerState extends State<Player> {
           if (focusedQualityIdx > 0) {
             setState(() => focusedQualityIdx--);
           }
+        } else if (_controlSection == ControlSection.playPause && _previousChannel != null) {
+          setState(() => _controlSection = ControlSection.recall);
         } else {
           setState(() => showControls = false);
           _openGuide();
@@ -333,6 +350,8 @@ class _PlayerState extends State<Player> {
           if (focusedQualityIdx < qList.length - 1) {
             setState(() => focusedQualityIdx++);
           }
+        } else if (_controlSection == ControlSection.recall) {
+          setState(() => _controlSection = ControlSection.playPause);
         }
         return KeyEventResult.handled;
       }
@@ -346,6 +365,14 @@ class _PlayerState extends State<Player> {
               c.play();
             }
             setState(() {});
+          } else if (failed) {
+            streamIdx = 0;
+            _open();
+          }
+        } else if (_controlSection == ControlSection.recall) {
+          final prev = _previousChannel;
+          if (prev != null) {
+            _tuneToChannel(prev);
           }
         } else if (_controlSection == ControlSection.quality) {
           if (focusedQualityIdx >= 0 && focusedQualityIdx < qList.length) {
@@ -396,10 +423,6 @@ class _PlayerState extends State<Player> {
         return KeyEventResult.handled;
       }
       // OK key opens play/pause and quality controls overlay
-      if (failed) {
-        streamIdx = 0;
-        _open();
-      }
       _openControls();
       return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.arrowRight) {
@@ -462,7 +485,7 @@ class _PlayerState extends State<Player> {
                               child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white70)))
                       : const SizedBox.shrink(),
                 ),
-              if (failed)
+              if (failed && !showControls)
                 Center(
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.signal_wifi_bad_rounded, color: Colors.white54, size: 40),
@@ -470,7 +493,7 @@ class _PlayerState extends State<Player> {
                     const Text('This channel isn’t available right now',
                         style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
-                    Text('OK to retry  ·  ▲ ▼ for another channel',
+                    Text('OK: Controls · ▲ ▼: Another channel · ◀: Guide',
                         style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
                   ]),
                 ),
@@ -610,53 +633,21 @@ class _PlayerState extends State<Player> {
 
             const Spacer(),
 
-            // Center: Play / Pause Hero button
-            GestureDetector(
-              onTap: () {
-                if (c != null) {
-                  c.value.isPlaying ? c.pause() : c.play();
-                  setState(() {});
-                  _resetControlsTimer();
-                }
+            // Center Controls: Recall Button (if available) + Play / Pause Hero Button
+            Builder(
+              builder: (context) {
+                final prev = _previousChannel;
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (prev != null) ...[
+                      _buildRecallButton(prev),
+                      const SizedBox(width: 48),
+                    ],
+                    _buildPlayPauseButton(isPlaying, c),
+                  ],
+                );
               },
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 140),
-                    width: 76,
-                    height: 76,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _controlSection == ControlSection.playPause ? Colors.white : const Color(0x33FFFFFF),
-                      boxShadow: _controlSection == ControlSection.playPause
-                          ? [
-                              BoxShadow(color: Colors.white.withValues(alpha: 0.8), blurRadius: 20, spreadRadius: 2),
-                            ]
-                          : [],
-                      border: Border.all(
-                        color: _controlSection == ControlSection.playPause ? Colors.white : const Color(0x66FFFFFF),
-                        width: 2,
-                      ),
-                    ),
-                    child: Icon(
-                      isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      size: 44,
-                      color: _controlSection == ControlSection.playPause ? Colors.black : Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    isPlaying ? 'PAUSE' : 'PLAY',
-                    style: TextStyle(
-                      color: _controlSection == ControlSection.playPause ? Colors.white : Colors.white70,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.5,
-                    ),
-                  ),
-                ],
-              ),
             ),
 
             const Spacer(),
@@ -697,7 +688,9 @@ class _PlayerState extends State<Player> {
                     ),
                   ),
                   Text(
-                    'OK: ${isPlaying ? 'Pause' : 'Play'}  ·  ▲: Quality  ·  ◀: Guide  ·  Back: Close',
+                    _previousChannel != null
+                        ? 'OK: Select  ·  ◀ / ▶: Switch Controls  ·  ▲: Quality  ·  Back: Close'
+                        : 'OK: ${isPlaying ? 'Pause' : 'Play'}  ·  ▲: Quality  ·  ◀: Guide  ·  Back: Close',
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
                   ),
                 ],
@@ -705,6 +698,111 @@ class _PlayerState extends State<Player> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildRecallButton(Channel prev) {
+    final isFocused = _controlSection == ControlSection.recall;
+    return GestureDetector(
+      onTap: () {
+        _tuneToChannel(prev);
+        _resetControlsTimer();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isFocused ? Colors.white : const Color(0x33FFFFFF),
+              boxShadow: isFocused
+                  ? [
+                      BoxShadow(color: Colors.white.withValues(alpha: 0.8), blurRadius: 20, spreadRadius: 2),
+                    ]
+                  : [],
+              border: Border.all(
+                color: isFocused ? Colors.white : const Color(0x66FFFFFF),
+                width: 2,
+              ),
+            ),
+            child: Icon(
+              Icons.replay_rounded,
+              size: 40,
+              color: isFocused ? Colors.black : Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 140),
+            child: Text(
+              'LAST: ${prev.name}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isFocused ? Colors.white : Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.1,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlayPauseButton(bool isPlaying, VideoPlayerController? c) {
+    final isFocused = _controlSection == ControlSection.playPause;
+    return GestureDetector(
+      onTap: () {
+        if (c != null) {
+          c.value.isPlaying ? c.pause() : c.play();
+          setState(() {});
+          _resetControlsTimer();
+        }
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isFocused ? Colors.white : const Color(0x33FFFFFF),
+              boxShadow: isFocused
+                  ? [
+                      BoxShadow(color: Colors.white.withValues(alpha: 0.8), blurRadius: 20, spreadRadius: 2),
+                    ]
+                  : [],
+              border: Border.all(
+                color: isFocused ? Colors.white : const Color(0x66FFFFFF),
+                width: 2,
+              ),
+            ),
+            child: Icon(
+              isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              size: 44,
+              color: isFocused ? Colors.black : Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            isPlaying ? 'PAUSE' : 'PLAY',
+            style: TextStyle(
+              color: isFocused ? Colors.white : Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.5,
+            ),
+          ),
+        ],
       ),
     );
   }

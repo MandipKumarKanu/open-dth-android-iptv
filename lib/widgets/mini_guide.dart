@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../model/channel.dart';
 import '../provider/channels_provider.dart' show categoryOrder;
 import '../provider/favorites_provider.dart';
+import '../provider/recent_provider.dart';
 import '../widgets/channel_icon.dart';
 import '../screens/home.dart' show isSelectKey;
 
@@ -43,6 +44,9 @@ class _MiniGuideState extends State<MiniGuide> {
     if (tab == 'Favorites') {
       return widget.allChannels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
     }
+    if (tab == 'Recent') {
+      return RecentProvider.instance.filterRecent(widget.allChannels);
+    }
     if (tab == 'All') {
       return widget.allChannels;
     }
@@ -63,11 +67,13 @@ class _MiniGuideState extends State<MiniGuide> {
       if (c.category.isNotEmpty) catsWithChannels.add(c.category);
     }
 
-    final knownOrdered = categoryOrder.where((c) => c != 'Favorites' && catsWithChannels.contains(c)).toList();
+    final knownOrdered = categoryOrder.where((c) => c != 'Favorites' && c != 'Recent' && catsWithChannels.contains(c)).toList();
     final remaining = catsWithChannels.where((c) => !categoryOrder.contains(c)).toList()..sort();
+    final recents = RecentProvider.instance.filterRecent(widget.allChannels);
 
     _tabs = [
       'Favorites',
+      if (recents.isNotEmpty) 'Recent',
       'All',
       ...knownOrdered,
       ...remaining,
@@ -326,6 +332,13 @@ class _MiniGuideState extends State<MiniGuide> {
                           Icons.star_rounded,
                           size: 14,
                           color: _selectedTab == i ? Colors.amber.shade800 : const Color(0xFFFFD700),
+                        ),
+                        const SizedBox(width: 4),
+                      ] else if (_tabs[i] == 'Recent') ...[
+                        Icon(
+                          Icons.history_rounded,
+                          size: 14,
+                          color: _selectedTab == i ? Colors.blue.shade700 : const Color(0xFF60A5FA),
                         ),
                         const SizedBox(width: 4),
                       ],

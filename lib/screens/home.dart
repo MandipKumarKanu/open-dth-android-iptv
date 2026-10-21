@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import '../model/channel.dart';
 import '../provider/channels_provider.dart';
 import '../provider/favorites_provider.dart';
+import '../provider/recent_provider.dart';
 import '../widgets/channel_icon.dart';
+import '../widgets/tv_search_dialog.dart';
 import 'player.dart';
 
 const bg = Color(0xFF0B0B0F);
@@ -17,6 +19,7 @@ const dim = Color(0xFF8E8E98);
 const _icons = <String, IconData>{
   'All': Icons.apps_rounded,
   'Favorites': Icons.star_rounded,
+  'Recent': Icons.history_rounded,
   'News': Icons.newspaper_rounded,
   'Entertainment': Icons.theater_comedy_rounded,
   'Movies': Icons.movie_rounded,
@@ -28,6 +31,64 @@ const _icons = <String, IconData>{
   'Devotional': Icons.temple_hindu_rounded,
   'Other': Icons.more_horiz_rounded,
 };
+
+const indianLanguages = [
+  'All',
+  'Hindi',
+  'English',
+  'Telugu',
+  'Tamil',
+  'Bangla',
+  'Punjabi',
+  'Marathi',
+  'Gujarati',
+  'Bhojpuri',
+  'Kannada',
+  'Malayalam',
+];
+
+bool channelMatchesLanguage(Channel c, String lang) {
+  if (lang == 'All') return true;
+  final n = c.name.toLowerCase();
+  final id = c.tvgId.toLowerCase();
+  final l = lang.toLowerCase();
+
+  if (l == 'hindi') {
+    return n.contains('hindi') ||
+        n.contains('aaj tak') ||
+        n.contains('zee news') ||
+        n.contains('india tv') ||
+        n.contains('ndtv india') ||
+        n.contains('news18 india') ||
+        n.contains('abp news') ||
+        n.contains('&tv') ||
+        n.contains('colors rishtey') ||
+        n.contains('star bharat') ||
+        n.contains('star plus') ||
+        n.contains('zee tv') ||
+        n.contains('sony pal') ||
+        n.contains('dangal') ||
+        n.contains('shemaroo') ||
+        n.contains('b4u') ||
+        n.contains('manoranjan') ||
+        n.contains('samay');
+  }
+  if (l == 'english') {
+    return n.contains('english') ||
+        n.contains('cnn') ||
+        n.contains('bbc') ||
+        n.contains('republic tv') ||
+        n.contains('times now') ||
+        n.contains('india today') ||
+        n.contains('wion') ||
+        n.contains('ndtv 24x7') ||
+        n.contains('al jazeera');
+  }
+  if (l == 'bangla') {
+    return n.contains('bangla') || n.contains('bengali') || n.contains('kolkata') || id.contains('bangla');
+  }
+  return n.contains(l) || id.contains(l);
+}
 
 bool isSelectKey(LogicalKeyboardKey k) =>
     k == LogicalKeyboardKey.select ||
@@ -55,6 +116,10 @@ class _HomeState extends State<Home> {
   bool loading = true;
   String? error;
 
+  String selectedLanguage = 'All';
+  final FocusNode _searchNode = FocusNode();
+  final FocusNode _headerSearchNode = FocusNode();
+  late final List<FocusNode> _langNodes = List.generate(indianLanguages.length, (_) => FocusNode());
   final List<FocusNode> sideNodes = [];
   /// one node per tile, keyed "category/index"; kept until the screen closes
   final Map<String, FocusNode> tileNodes = {};
@@ -81,8 +146,12 @@ class _HomeState extends State<Home> {
   Timer? _switchTimer;
   static const _switchDelay = Duration(milliseconds: 200);
 
-  List<Channel> get current =>
-      categories.isEmpty ? const [] : byCategory[categories[selected]] ?? const [];
+  List<Channel> get current {
+    if (categories.isEmpty) return const [];
+    final raw = byCategory[categories[selected]] ?? const [];
+    if (selectedLanguage == 'All') return raw;
+    return raw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
+  }
 
   Timer? _okTimer;
   bool _okTriggered = false;
@@ -93,9 +162,32 @@ class _HomeState extends State<Home> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _searchNode.dispose();
+    _headerSearchNode.dispose();
+    for (final n in _langNodes) {
+      n.dispose();
+    }
+    for (final n in sideNodes) {
+      n.dispose();
+    }
+    for (final n in tileNodes.values) {
+      n.dispose();
+    }
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    _switchTimer?.cancel();
+    _prebuildTimer?.cancel();
+    _okTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _load() async {
-    // 0) load saved favorites
+    // 0) load saved favorites and recents
     await FavoritesProvider.instance.load();
+    await RecentProvider.instance.load();
     // 1) cached list -> instant start
     final cached = await provider.loadCached();
     if (cached != null && mounted) _setChannels(cached);
@@ -117,13 +209,16 @@ class _HomeState extends State<Home> {
     final map = <String, List<Channel>>{'All': channels};
     final favs = channels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
     map['Favorites'] = favs;
+    final recents = RecentProvider.instance.filterRecent(channels);
+    map['Recent'] = recents;
     for (final c in channels) {
       (map[c.category] ??= []).add(c);
     }
     final cats = [
       'All',
       'Favorites',
-      ...categoryOrder.where((c) => c != 'Favorites' && (map[c]?.isNotEmpty ?? false)),
+      'Recent',
+      ...categoryOrder.where((c) => c != 'Favorites' && c != 'Recent' && (map[c]?.isNotEmpty ?? false)),
     ];
     final first = categories.isEmpty;
     final keep = first ? 'All' : categories[selected];
@@ -150,58 +245,36 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> _toggleFav(int i) async {
-    if (i < 0 || i >= current.length) return;
-    final channel = current[i];
-    final added = await FavoritesProvider.instance.toggle(channel);
+    final list = current;
+    if (i < 0 || i >= list.length) return;
+    final channel = list[i];
+    await FavoritesProvider.instance.toggle(channel);
     if (!mounted) return;
 
     final all = byCategory['All'] ?? [];
     byCategory['Favorites'] = all.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
+    byCategory['Recent'] = RecentProvider.instance.filterRecent(all);
     _grids.clear();
     setState(() {});
+  }
 
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(added ? Icons.star_rounded : Icons.star_border_rounded,
-                color: added ? const Color(0xFFFFD700) : Colors.white70, size: 20),
-            const SizedBox(width: 10),
-            Text(
-              added ? 'Added ${channel.name} to Favorites' : 'Removed ${channel.name} from Favorites',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF22222E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+  void _openSearchDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => TvSearchDialog(
+        allChannels: byCategory['All'] ?? [],
+        onChannelSelect: (ch) {
+          final all = byCategory['All'] ?? [];
+          final idx = all.indexWhere((c) => c.idKey == ch.idKey);
+          _playDirect(all, idx >= 0 ? idx : 0);
+        },
       ),
     );
   }
 
-  @override
-  void dispose() {
-    _okTimer?.cancel();
-    for (final n in sideNodes) {
-      n.dispose();
-    }
-    for (final n in tileNodes.values) {
-      n.dispose();
-    }
-    _switchTimer?.cancel();
-    _prebuildTimer?.cancel();
-    for (final c in _controllers.values) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
   // ---------------------------------------------------------------- navigation
 
-  FocusNode _tileNode(int i) => tileNodes.putIfAbsent('${categories[selected]}/$i', () => FocusNode());
+  FocusNode _tileNode(int i) => tileNodes.putIfAbsent('${categories[selected]}/$selectedLanguage/$i', () => FocusNode());
 
   void _selectCategory(int i) {
     if (i == selected) return;
@@ -223,12 +296,30 @@ class _HomeState extends State<Home> {
     setState(() => _mounted.add(next));
   }
 
+  KeyEventResult _searchKey(KeyEvent e) {
+    if (e is KeyUpEvent) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    if (k == LogicalKeyboardKey.arrowDown) {
+      if (sideNodes.isNotEmpty) sideNodes[0].requestFocus();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight || isSelectKey(k)) {
+      _openSearchDialog();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.handled;
+  }
+
   KeyEventResult _sideKey(int i, KeyEvent e) {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     _lastInput = DateTime.now();
     final k = e.logicalKey;
     if (k == LogicalKeyboardKey.arrowUp) {
-      if (i > 0) sideNodes[i - 1].requestFocus();
+      if (i > 0) {
+        sideNodes[i - 1].requestFocus();
+      } else {
+        _searchNode.requestFocus();
+      }
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowDown) {
@@ -287,7 +378,7 @@ class _HomeState extends State<Home> {
       return KeyEventResult.handled;
     }
 
-    // Hotkeys for favorite toggle
+    // Toggle Favorite instantly on remote MENU / PLAY_PAUSE / F1 / F3 keys
     if (k == LogicalKeyboardKey.contextMenu ||
         k == LogicalKeyboardKey.mediaPlayPause ||
         k == LogicalKeyboardKey.f1 ||
@@ -314,7 +405,14 @@ class _HomeState extends State<Home> {
     } else if (k == LogicalKeyboardKey.arrowRight) {
       if (i % cols < cols - 1 && i + 1 < n) target = i + 1;
     } else if (k == LogicalKeyboardKey.arrowUp) {
-      if (i >= cols) target = i - cols;
+      if (i >= cols) {
+        target = i - cols;
+      } else {
+        final langIdx = indianLanguages.indexOf(selectedLanguage);
+        final focusIdx = langIdx >= 0 ? langIdx : 0;
+        _langNodes[focusIdx].requestFocus();
+        return KeyEventResult.handled;
+      }
     } else if (k == LogicalKeyboardKey.arrowDown) {
       if (i + cols < n) {
         target = i + cols;
@@ -360,6 +458,7 @@ class _HomeState extends State<Home> {
 
   Future<void> _play(int i) async {
     final list = current;
+    if (list.isEmpty || i >= list.length) return;
     final result = await Navigator.of(context).push<int>(PageRouteBuilder(
       pageBuilder: (_, __, ___) => Player(
         channels: list,
@@ -371,13 +470,40 @@ class _HomeState extends State<Home> {
       reverseTransitionDuration: const Duration(milliseconds: 120),
       transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
     ));
-    // land on the channel that was playing last & refresh favorites in case player toggled it
+    // land on the channel that was playing last & refresh favorites & recents
     if (mounted && list.isNotEmpty) {
       final all = byCategory['All'] ?? [];
       byCategory['Favorites'] = all.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
+      byCategory['Recent'] = RecentProvider.instance.filterRecent(all);
       _grids.clear();
       setState(() {});
-      _focusTile((result ?? i).clamp(0, current.isNotEmpty ? current.length - 1 : 0));
+      if (current.isNotEmpty) {
+        _focusTile((result ?? i).clamp(0, current.length - 1));
+      }
+    }
+  }
+
+  Future<void> _playDirect(List<Channel> list, int i) async {
+    final result = await Navigator.of(context).push<int>(PageRouteBuilder(
+      pageBuilder: (_, __, ___) => Player(
+        channels: list,
+        index: i,
+        allChannels: byCategory['All'] ?? list,
+        initialCategory: 'All',
+      ),
+      transitionDuration: const Duration(milliseconds: 150),
+      reverseTransitionDuration: const Duration(milliseconds: 120),
+      transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
+    ));
+    if (mounted) {
+      final all = byCategory['All'] ?? [];
+      byCategory['Favorites'] = all.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
+      byCategory['Recent'] = RecentProvider.instance.filterRecent(all);
+      _grids.clear();
+      setState(() {});
+      if (current.isNotEmpty) {
+        _focusTile((result ?? i).clamp(0, current.length - 1));
+      }
     }
   }
 
@@ -405,7 +531,7 @@ class _HomeState extends State<Home> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: 8, bottom: 18),
+            padding: const EdgeInsets.only(left: 8, bottom: 16),
             child: Row(children: [
               Container(
                 padding: const EdgeInsets.all(6),
@@ -416,6 +542,12 @@ class _HomeState extends State<Home> {
               const Text('Live TV', style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w700)),
             ]),
           ),
+          _SearchSidebarTile(
+            node: _searchNode,
+            onTap: _openSearchDialog,
+            onKey: _searchKey,
+          ),
+          const SizedBox(height: 10),
           Expanded(
             child: ListView.builder(
               padding: EdgeInsets.zero,
@@ -458,21 +590,18 @@ class _HomeState extends State<Home> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Category title, count, resolution tag & search button
         Padding(
-          padding: const EdgeInsets.fromLTRB(28, 26, 28, 4),
+          padding: const EdgeInsets.fromLTRB(28, 22, 28, 6),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(categories[selected],
                   style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700)),
               const SizedBox(width: 12),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 3),
-                child: Text('${list.length} channels', style: const TextStyle(color: dim, fontSize: 13)),
-              ),
+              Text('${list.length} channels', style: const TextStyle(color: dim, fontSize: 13)),
               const SizedBox(width: 8),
               Container(
-                margin: const EdgeInsets.only(bottom: 3),
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                     border: Border.all(color: dim.withValues(alpha: 0.5)),
@@ -480,9 +609,111 @@ class _HomeState extends State<Home> {
                 child: const Text('FHD · HD',
                     style: TextStyle(color: dim, fontSize: 10, fontWeight: FontWeight.w600)),
               ),
+              const Spacer(),
+              _buildSearchHeaderButton(),
             ],
           ),
         ),
+
+        // Language Filter Chips
+        SizedBox(
+          height: 38,
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            scrollDirection: Axis.horizontal,
+            itemCount: indianLanguages.length,
+            itemBuilder: (context, idx) {
+              final lang = indianLanguages[idx];
+              final isSel = selectedLanguage == lang;
+              final node = _langNodes[idx];
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Focus(
+                  focusNode: node,
+                  onKeyEvent: (_, e) {
+                    if (e is KeyUpEvent) return KeyEventResult.ignored;
+                    final k = e.logicalKey;
+                    if (k == LogicalKeyboardKey.arrowLeft) {
+                      if (idx > 0) {
+                        _langNodes[idx - 1].requestFocus();
+                      } else {
+                        sideNodes[selected].requestFocus();
+                      }
+                      return KeyEventResult.handled;
+                    }
+                    if (k == LogicalKeyboardKey.arrowRight) {
+                      if (idx < indianLanguages.length - 1) {
+                        _langNodes[idx + 1].requestFocus();
+                      }
+                      return KeyEventResult.handled;
+                    }
+                    if (k == LogicalKeyboardKey.arrowDown) {
+                      if (current.isNotEmpty) {
+                        _focusTile(0);
+                      }
+                      return KeyEventResult.handled;
+                    }
+                    if (k == LogicalKeyboardKey.arrowUp) {
+                      _headerSearchNode.requestFocus();
+                      return KeyEventResult.handled;
+                    }
+                    if (isSelectKey(k)) {
+                      setState(() {
+                        selectedLanguage = lang;
+                        _grids.clear();
+                      });
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: ListenableBuilder(
+                    listenable: node,
+                    builder: (context, _) {
+                      final hasFocus = node.hasFocus;
+                      return GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            selectedLanguage = lang;
+                            _grids.clear();
+                          });
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 140),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: hasFocus
+                                ? Colors.white
+                                : (isSel ? const Color(0xFF2563EB) : const Color(0x18FFFFFF)),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: hasFocus
+                                  ? Colors.white
+                                  : (isSel ? const Color(0xFF60A5FA) : const Color(0x22FFFFFF)),
+                              width: hasFocus ? 2 : (isSel ? 1.5 : 1),
+                            ),
+                            boxShadow: hasFocus
+                                ? [BoxShadow(color: Colors.white.withValues(alpha: 0.6), blurRadius: 10)]
+                                : (isSel ? [BoxShadow(color: const Color(0xFF2563EB).withValues(alpha: 0.4), blurRadius: 8)] : null),
+                          ),
+                          child: Text(
+                            lang,
+                            style: TextStyle(
+                              color: hasFocus ? Colors.black : (isSel ? Colors.white : Colors.white70),
+                              fontSize: 12.5,
+                              fontWeight: (hasFocus || isSel) ? FontWeight.w700 : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 6),
+
         Expanded(
           child: LayoutBuilder(builder: (context, box) {
             if (_gridSizes != box.biggest) {
@@ -502,13 +733,79 @@ class _HomeState extends State<Home> {
     );
   }
 
+  Widget _buildSearchHeaderButton() {
+    return Focus(
+      focusNode: _headerSearchNode,
+      onKeyEvent: (_, e) {
+        if (e is KeyUpEvent) return KeyEventResult.ignored;
+        final k = e.logicalKey;
+        if (k == LogicalKeyboardKey.arrowDown) {
+          final langIdx = indianLanguages.indexOf(selectedLanguage);
+          _langNodes[langIdx >= 0 ? langIdx : 0].requestFocus();
+          return KeyEventResult.handled;
+        }
+        if (k == LogicalKeyboardKey.arrowLeft) {
+          sideNodes[selected].requestFocus();
+          return KeyEventResult.handled;
+        }
+        if (isSelectKey(k)) {
+          _openSearchDialog();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: ListenableBuilder(
+        listenable: _headerSearchNode,
+        builder: (context, _) {
+          final hasFocus = _headerSearchNode.hasFocus;
+          return GestureDetector(
+            onTap: _openSearchDialog,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: hasFocus ? Colors.white : const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: hasFocus ? Colors.white : const Color(0xFF38BDF8).withValues(alpha: 0.4),
+                  width: hasFocus ? 2 : 1,
+                ),
+                boxShadow: hasFocus
+                    ? [BoxShadow(color: Colors.white.withValues(alpha: 0.5), blurRadius: 10)]
+                    : null,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.search_rounded, size: 15, color: hasFocus ? Colors.black : const Color(0xFF38BDF8)),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Search Channels',
+                    style: TextStyle(
+                      color: hasFocus ? Colors.black : Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _grid(String cat, double width) {
     const pad = 20.0;
     final cellW = (width - pad * 2) / cols;
     final cardW = cellW - 14;
     final cardH = cardW * 0.58;
     rowExtent = cardH + 40;
-    final list = byCategory[cat] ?? const <Channel>[];
+    final raw = byCategory[cat] ?? const <Channel>[];
+    final list = selectedLanguage == 'All'
+        ? raw
+        : raw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
 
     if (cat == 'Favorites' && list.isEmpty) {
       return Center(
@@ -535,8 +832,47 @@ class _HomeState extends State<Home> {
       );
     }
 
+    if (cat == 'Recent' && list.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0x1838BDF8),
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0x4038BDF8), width: 1.5),
+              ),
+              child: const Icon(Icons.history_rounded, size: 52, color: Color(0xFF38BDF8)),
+            ),
+            const SizedBox(height: 18),
+            const Text('No Recently Watched Channels',
+                style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            const Text('Channels you play will automatically appear here',
+                style: TextStyle(color: dim, fontSize: 13.5)),
+          ],
+        ),
+      );
+    }
+
+    if (list.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.tv_off_rounded, size: 48, color: Colors.white24),
+            const SizedBox(height: 12),
+            Text('No channels found for $selectedLanguage in $cat',
+                style: const TextStyle(color: dim, fontSize: 14)),
+          ],
+        ),
+      );
+    }
+
     return GridView.builder(
-      key: ValueKey('grid/$cat'),
+      key: ValueKey('grid/$cat/$selectedLanguage'),
       controller: _controllers.putIfAbsent(cat, () => ScrollController()),
       scrollCacheExtent: ScrollCacheExtent.pixels(rowExtent),
       addAutomaticKeepAlives: false,
@@ -549,14 +885,77 @@ class _HomeState extends State<Home> {
       ),
       itemCount: list.length,
       itemBuilder: (context, i) => _Tile(
-        key: ValueKey('$cat/$i'),
+        key: ValueKey('$cat/$selectedLanguage/$i'),
         channel: list[i],
-        node: tileNodes.putIfAbsent('$cat/$i', () => FocusNode()),
+        node: tileNodes.putIfAbsent('$cat/$selectedLanguage/$i', () => FocusNode()),
         cardW: cardW,
         cardH: cardH,
-        onKey: (e) => _tileKey(i, e),
         onTap: () => _play(i),
         onLongPress: () => _toggleFav(i),
+        onKey: (e) => _tileKey(i, e),
+      ),
+    );
+  }
+}
+
+class _SearchSidebarTile extends StatefulWidget {
+  final FocusNode node;
+  final VoidCallback onTap;
+  final KeyEventResult Function(KeyEvent) onKey;
+
+  const _SearchSidebarTile({
+    required this.node,
+    required this.onTap,
+    required this.onKey,
+  });
+
+  @override
+  State<_SearchSidebarTile> createState() => _SearchSidebarTileState();
+}
+
+class _SearchSidebarTileState extends State<_SearchSidebarTile> {
+  bool focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      focusNode: widget.node,
+      onFocusChange: (f) => setState(() => focused = f),
+      onKeyEvent: (_, e) => widget.onKey(e),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          height: 38,
+          margin: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: focused ? Colors.white : const Color(0x18FFFFFF),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: focused ? Colors.white : Colors.transparent,
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.search_rounded,
+                size: 18,
+                color: focused ? Colors.black : const Color(0xFF38BDF8),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Search',
+                style: TextStyle(
+                  color: focused ? Colors.black : Colors.white,
+                  fontSize: 14,
+                  fontWeight: focused ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -591,10 +990,15 @@ class _SideItemState extends State<_SideItem> {
   @override
   Widget build(BuildContext context) {
     final isFav = widget.label == 'Favorites';
+    final isRecent = widget.label == 'Recent';
     final fg = focused ? Colors.black : (widget.selected ? Colors.white : const Color(0xFFB4B4BE));
     final iconColor = focused
         ? Colors.black
-        : (isFav ? const Color(0xFFFFD700) : (widget.selected ? Colors.white : const Color(0xFFB4B4BE)));
+        : (isFav
+            ? const Color(0xFFFFD700)
+            : isRecent
+                ? const Color(0xFF38BDF8)
+                : (widget.selected ? Colors.white : const Color(0xFFB4B4BE)));
 
     return Focus(
       focusNode: widget.node,
@@ -636,10 +1040,11 @@ class _SideItemState extends State<_SideItem> {
 class _Tile extends StatefulWidget {
   final Channel channel;
   final FocusNode node;
-  final double cardW, cardH;
-  final KeyEventResult Function(KeyEvent) onKey;
+  final double cardW;
+  final double cardH;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final KeyEventResult Function(KeyEvent) onKey;
 
   const _Tile({
     super.key,
@@ -647,9 +1052,9 @@ class _Tile extends StatefulWidget {
     required this.node,
     required this.cardW,
     required this.cardH,
-    required this.onKey,
     required this.onTap,
     required this.onLongPress,
+    required this.onKey,
   });
 
   @override
@@ -669,7 +1074,12 @@ class _TileState extends State<_Tile> {
           padding: const EdgeInsets.all(4.5),
           child: Stack(
             children: [
-              ChannelIcon(channel: widget.channel, width: widget.cardW - 9, height: widget.cardH - 9),
+              ChannelIcon(
+                key: ValueKey(widget.channel.logoUrl + widget.channel.name),
+                channel: widget.channel,
+                width: widget.cardW - 9,
+                height: widget.cardH - 9,
+              ),
               if (isFav)
                 Positioned(
                   top: 5,
@@ -694,6 +1104,9 @@ class _TileState extends State<_Tile> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12.5),
                 border: Border.all(color: Colors.white, width: 2),
+                boxShadow: [
+                  BoxShadow(color: Colors.white.withValues(alpha: 0.35), blurRadius: 14, spreadRadius: 1),
+                ],
               ),
               child: card,
             ),
