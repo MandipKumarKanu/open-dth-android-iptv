@@ -6,16 +6,18 @@ import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../model/channel.dart';
+import '../provider/epg_provider.dart';
 import '../provider/favorites_provider.dart';
 import '../provider/recent_provider.dart';
 import '../widgets/channel_icon.dart';
 import '../widgets/mini_guide.dart';
+import '../widgets/timeline_guide.dart';
 import 'home.dart' show isSelectKey;
 
 enum ControlSection { playPause, recall, quality }
 
 /// Full-screen live player.
-/// ◀ (Left) opens Mini-Guide, OK toggles Controls Overlay (Play/Pause & Quality switcher),
+/// ◀ (Left) opens Mini-Guide, OK toggles DTH Timeline Guide,
 /// ▲/▼ zaps channels, Back closes overlays or returns to Home.
 class Player extends StatefulWidget {
   final List<Channel> channels;
@@ -46,18 +48,20 @@ class _PlayerState extends State<Player> {
   bool failed = false;
   bool showInfo = true;
   bool showGuide = false;
+  bool showTimelineGuide = false;
   bool showControls = false;
   ControlSection _controlSection = ControlSection.playPause;
 
   String selectedQuality = 'Auto';
   int focusedQualityIdx = 0;
   String? qualityNotice;
-  Timer? _noticeTimer, controlsTimer, infoTimer, startTimer, zapTimer, guideTimer;
+  Timer? _noticeTimer, controlsTimer, infoTimer, startTimer, zapTimer, guideTimer, timelineGuideTimer;
   final List<DateTime> _bufferEvents = [];
 
   int _generation = 0;
   final focus = FocusNode();
   DateTime _lastGuideClose = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastTimelineGuideClose = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastControlsClose = DateTime.fromMillisecondsSinceEpoch(0);
 
   Channel get channel => activeChannels[index];
@@ -91,6 +95,7 @@ class _PlayerState extends State<Player> {
     startTimer?.cancel();
     zapTimer?.cancel();
     guideTimer?.cancel();
+    timelineGuideTimer?.cancel();
     controlsTimer?.cancel();
     _noticeTimer?.cancel();
     controller?.dispose();
@@ -231,8 +236,38 @@ class _PlayerState extends State<Player> {
   void _flashInfo() {
     showInfo = true;
     infoTimer?.cancel();
-    infoTimer = Timer(const Duration(seconds: 4), () {
+    infoTimer = Timer(const Duration(seconds: 5), () {
       if (mounted && !failed) setState(() => showInfo = false);
+    });
+  }
+
+  void _openTimelineGuide() {
+    setState(() {
+      showTimelineGuide = true;
+      showGuide = false;
+      showControls = false;
+      showInfo = false;
+    });
+    infoTimer?.cancel();
+    controlsTimer?.cancel();
+    guideTimer?.cancel();
+    _resetTimelineGuideTimer();
+  }
+
+  void _closeTimelineGuide() {
+    _lastTimelineGuideClose = DateTime.now();
+    timelineGuideTimer?.cancel();
+    if (mounted) {
+      setState(() => showTimelineGuide = false);
+      focus.requestFocus();
+      _flashInfo();
+    }
+  }
+
+  void _resetTimelineGuideTimer() {
+    timelineGuideTimer?.cancel();
+    timelineGuideTimer = Timer(const Duration(seconds: 30), () {
+      if (mounted && showTimelineGuide) _closeTimelineGuide();
     });
   }
 
@@ -241,11 +276,13 @@ class _PlayerState extends State<Player> {
       showControls = true;
       showInfo = false;
       showGuide = false;
+      showTimelineGuide = false;
       _controlSection = ControlSection.playPause;
       final qList = availableQualities;
       focusedQualityIdx = qList.contains(selectedQuality) ? qList.indexOf(selectedQuality) : 0;
     });
     infoTimer?.cancel();
+    timelineGuideTimer?.cancel();
     _resetControlsTimer();
   }
 
@@ -263,9 +300,11 @@ class _PlayerState extends State<Player> {
       showGuide = true;
       showInfo = false;
       showControls = false;
+      showTimelineGuide = false;
     });
     infoTimer?.cancel();
     controlsTimer?.cancel();
+    timelineGuideTimer?.cancel();
     _resetGuideTimer();
   }
 
@@ -281,7 +320,7 @@ class _PlayerState extends State<Player> {
 
   void _resetGuideTimer() {
     guideTimer?.cancel();
-    guideTimer = Timer(const Duration(seconds: 12), () {
+    guideTimer = Timer(const Duration(seconds: 14), () {
       if (mounted && showGuide) _closeGuide();
     });
   }
@@ -289,7 +328,8 @@ class _PlayerState extends State<Player> {
   void _tuneToChannel(Channel newChannel) {
     if (newChannel.idKey == channel.idKey) {
       // Channel is already playing! Just close overlay without reloading
-      _closeGuide();
+      if (showTimelineGuide) _closeTimelineGuide();
+      if (showGuide) _closeGuide();
       return;
     }
     int n = activeChannels.indexWhere((c) => c.idKey == newChannel.idKey);
@@ -303,7 +343,8 @@ class _PlayerState extends State<Player> {
       selectedQuality = 'Auto';
       showControls = false;
     });
-    _closeGuide();
+    if (showTimelineGuide) _closeTimelineGuide();
+    if (showGuide) _closeGuide();
     _open();
   }
 
@@ -403,8 +444,10 @@ class _PlayerState extends State<Player> {
       return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.contextMenu ||
         k == LogicalKeyboardKey.f1 ||
-        k == LogicalKeyboardKey.f3 ||
-        k == LogicalKeyboardKey.mediaPlayPause) {
+        k == LogicalKeyboardKey.f3) {
+      _openControls();
+      return KeyEventResult.handled;
+    } else if (k == LogicalKeyboardKey.mediaPlayPause) {
       FavoritesProvider.instance.toggle(channel).then((_) {
         if (mounted) setState(_flashInfo);
       });
@@ -419,11 +462,12 @@ class _PlayerState extends State<Player> {
       }
       return KeyEventResult.handled;
     } else if (isSelectKey(k)) {
-      if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350)) {
+      if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350) ||
+          DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 350)) {
         return KeyEventResult.handled;
       }
-      // OK key opens play/pause and quality controls overlay
-      _openControls();
+      // OK key opens full DTH Timeline Guide!
+      _openTimelineGuide();
       return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.arrowRight) {
       setState(_flashInfo);
@@ -441,6 +485,10 @@ class _PlayerState extends State<Player> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        if (showTimelineGuide) {
+          _closeTimelineGuide();
+          return;
+        }
         if (showControls) {
           _lastControlsClose = DateTime.now();
           setState(() => showControls = false);
@@ -453,7 +501,8 @@ class _PlayerState extends State<Player> {
           _closeGuide();
           return;
         }
-        if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350)) {
+        if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350) ||
+            DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 350)) {
           return;
         }
         Navigator.of(context).pop(index);
@@ -493,26 +542,26 @@ class _PlayerState extends State<Player> {
                     const Text('This channel isn’t available right now',
                         style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
-                    Text('OK: Controls · ▲ ▼: Another channel · ◀: Guide',
+                    Text('OK: Timeline Guide · Menu: Controls · ▲ ▼: Another channel · ◀: Channels',
                         style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
                   ]),
                 ),
 
               // Simple bottom info bar when controls and guide are hidden
               AnimatedOpacity(
-                opacity: showInfo && !showGuide && !showControls ? 1 : 0,
+                opacity: showInfo && !showGuide && !showControls && !showTimelineGuide ? 1 : 0,
                 duration: const Duration(milliseconds: 250),
                 child: Align(alignment: Alignment.bottomCenter, child: _infoBar()),
               ),
 
               // Full Controls Overlay (Play/Pause & Quality switcher)
-              if (showControls && !showGuide)
+              if (showControls && !showGuide && !showTimelineGuide)
                 Positioned.fill(
                   child: _buildControlsOverlay(c),
                 ),
 
               // Mini Guide Sidebar
-              if (showGuide)
+              if (showGuide && !showTimelineGuide)
                 Positioned(
                   top: 0,
                   bottom: 0,
@@ -524,6 +573,22 @@ class _PlayerState extends State<Player> {
                     onTune: _tuneToChannel,
                     onClose: _closeGuide,
                     onUserActivity: _resetGuideTimer,
+                  ),
+                ),
+
+              // Full DTH Timeline Guide Overlay (Airtel/Tata Play STB style from photo!)
+              if (showTimelineGuide)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: TimelineGuide(
+                    allChannels: allChannels,
+                    currentChannel: channel,
+                    initialCategory: widget.initialCategory,
+                    onTune: _tuneToChannel,
+                    onClose: _closeTimelineGuide,
+                    onUserActivity: _resetTimelineGuideTimer,
                   ),
                 ),
             ],
@@ -874,53 +939,290 @@ class _PlayerState extends State<Player> {
   }
 
   Widget _infoBar() {
+    final nowProg = EpgProvider.instance.getNow(channel);
+    final nextProg = EpgProvider.instance.getNext(channel);
+    final now = DateTime.now();
+    final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
+    final minute = now.minute.toString().padLeft(2, '0');
+    final ampm = now.hour >= 12 ? 'PM' : 'AM';
+    final timeStr = '$hour:$minute $ampm';
+
+    final resText = channel.streamResolutions.length > streamIdx
+        ? channel.streamResolutions[streamIdx]
+        : channel.resolution;
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(32, 40, 32, 26),
+      padding: const EdgeInsets.fromLTRB(28, 20, 28, 20),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0x00000000), Color(0xCC000000)],
+          colors: [
+            Color(0x00000000),
+            Color(0xB3050B14),
+            Color(0xF0050B14),
+          ],
+          stops: [0.0, 0.35, 1.0],
         ),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          ChannelIcon(key: ValueKey(channel.logoUrl + channel.name), channel: channel, width: 96, height: 56),
-          const SizedBox(width: 16),
+          // 1. Channel Logo & Number
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: const Color(0x33000000),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0x22FFFFFF), width: 1),
+            ),
+            child: ChannelIcon(
+              key: ValueKey(channel.logoUrl + channel.name),
+              channel: channel,
+              width: 90,
+              height: 52,
+            ),
+          ),
+          const SizedBox(width: 18),
+
+          // 2. Main EPG & Channel Details
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Top Row: Channel number + name + Badges + Clock
                 Row(
                   children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0284C7),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     Flexible(
-                      child: Text(channel.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+                      child: Text(
+                        channel.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
                     ),
                     if (FavoritesProvider.instance.isFavorite(channel)) ...[
-                      const SizedBox(width: 8),
-                      const Icon(Icons.star_rounded, color: Color(0xFFFFD700), size: 22),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.star_rounded, color: Color(0xFFFFD700), size: 20),
                     ],
+                    const SizedBox(width: 10),
+                    // Category pill
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0x22FFFFFF),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        channel.category,
+                        style: const TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    // Resolution / Quality pill
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0x1838BDF8),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: const Color(0x4438BDF8), width: 0.8),
+                      ),
+                      child: Text(
+                        resText.toUpperCase(),
+                        style: const TextStyle(
+                          color: Color(0xFF38BDF8),
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    // Live Clock
+                    Text(
+                      timeStr,
+                      style: const TextStyle(
+                        color: Color(0xFFF1F5F9),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${channel.category}  ·  ${index + 1} of ${activeChannels.length}  ·  $selectedQuality (${channel.streamResolutions.length > streamIdx ? channel.streamResolutions[streamIdx] : channel.resolution})'
-                  '${streamIdx > 0 ? '  ·  backup ${streamIdx + 1}' : ''}',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 13),
-                ),
+                const SizedBox(height: 6),
+
+                // Now Playing Program Row
+                if (nowProg != null) ...[
+                  Row(
+                    children: [
+                      const Text(
+                        'NOW',
+                        style: TextStyle(
+                          color: Color(0xFF38BDF8),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          nowProg.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        nowProg.timeRangeText,
+                        style: const TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: const Color(0x250284C7),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          nowProg.remainingText,
+                          style: const TextStyle(
+                            color: Color(0xFF38BDF8),
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  // Progress Bar
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: SizedBox(
+                      height: 3,
+                      child: LinearProgressIndicator(
+                        value: nowProg.progress.clamp(0.0, 1.0),
+                        backgroundColor: const Color(0x22FFFFFF),
+                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF38BDF8)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  // Next Show Row + Remote Key Hints
+                  Row(
+                    children: [
+                      if (nextProg != null) ...[
+                        const Text(
+                          'NEXT',
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            '${nextProg.title} (${nextProg.timeRangeText})',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF94A3B8),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        const Text(
+                          'Live Streaming',
+                          style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                        ),
+                      ],
+                      const Spacer(),
+                      const Text(
+                        'OK: Guide  ·  ◀: Channels  ·  ▲▼: Zap  ·  Menu: ⭐',
+                        style: TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else ...[
+                  // Fallback when no EPG data for this channel
+                  Row(
+                    children: [
+                      const Text(
+                        'Live Broadcast',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Channel ${index + 1} of ${activeChannels.length}  ·  $selectedQuality',
+                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                      ),
+                      const Spacer(),
+                      const Text(
+                        'OK: Guide  ·  ◀: Channels  ·  ▲▼: Zap  ·  Menu: ⭐',
+                        style: TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
-          Text('◀: Guide  ·  OK: Controls & Quality  ·  ▲ ▼: Zap  ·  Menu: ⭐ Fav',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
         ],
       ),
     );
   }
 }
+

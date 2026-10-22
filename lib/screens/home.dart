@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../model/channel.dart';
 import '../provider/channels_provider.dart';
+import '../provider/epg_provider.dart';
 import '../provider/favorites_provider.dart';
 import '../provider/recent_provider.dart';
 import '../widgets/channel_icon.dart';
@@ -238,9 +239,12 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> _load() async {
-    // 0) load saved favorites and recents
+    // 0) load saved favorites, recents, and EPG data
     await FavoritesProvider.instance.load();
     await RecentProvider.instance.load();
+    await EpgProvider.instance.loadCached();
+    EpgProvider.instance.refresh();
+
     // 1) cached list -> instant start
     final cached = await provider.loadCached();
     if (cached != null && mounted) _setChannels(cached);

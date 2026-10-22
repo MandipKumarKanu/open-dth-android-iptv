@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../model/channel.dart';
 import '../provider/channels_provider.dart' show categoryOrder;
+import '../provider/epg_provider.dart';
 import '../provider/favorites_provider.dart';
 import '../provider/recent_provider.dart';
 import '../widgets/channel_icon.dart';
@@ -471,15 +472,23 @@ class _MiniGuideState extends State<MiniGuide> {
                             ),
                             const SizedBox(width: 6),
                           ],
-                          Text(
-                            c.category,
-                            style: TextStyle(
-                              color: isFocused
-                                  ? Colors.black54
-                                  : Colors.white.withValues(alpha: 0.5),
-                              fontSize: 11,
-                            ),
-                          ),
+                          () {
+                            final prog = EpgProvider.instance.getNow(c);
+                            return Expanded(
+                              child: Text(
+                                prog != null ? '▶ ${prog.title}' : c.category,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: isFocused
+                                      ? (prog != null ? const Color(0xFF0369A1) : Colors.black54)
+                                      : (prog != null ? const Color(0xFF38BDF8) : Colors.white.withValues(alpha: 0.5)),
+                                  fontSize: 11,
+                                  fontWeight: prog != null ? FontWeight.w600 : FontWeight.w400,
+                                ),
+                              ),
+                            );
+                          }(),
                         ],
                       ),
                     ],
