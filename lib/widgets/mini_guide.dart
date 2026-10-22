@@ -40,27 +40,30 @@ class _MiniGuideState extends State<MiniGuide> {
   final FocusNode _focusNode = FocusNode();
   int _focusedIndex = 0;
 
+  final Map<String, List<Channel>> _tabChannelLists = {};
+  final Set<String> _dirtyTabs = {};
+  bool _hasFavChangesInCurrentTab = false;
+
   List<Channel> _getChannelsForTab(String tab) {
+    if (_tabChannelLists.containsKey(tab)) {
+      return _tabChannelLists[tab]!;
+    }
+    List<Channel> list;
     if (tab == 'Favorites') {
-      return widget.allChannels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
-    }
-    if (tab == 'Recent') {
-      return RecentProvider.instance.filterRecent(widget.allChannels);
-    }
-    if (tab == 'Favorites') {
-      return widget.allChannels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
-    }
-    if (tab == 'Recent') {
-      return RecentProvider.instance.filterRecent(widget.allChannels);
-    }
-    if (tab == 'Home' || tab == 'All') {
+      list = widget.allChannels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
+    } else if (tab == 'Recent') {
+      list = RecentProvider.instance.filterRecent(widget.allChannels);
+    } else if (tab == 'Home' || tab == 'All') {
       final favs = widget.allChannels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
-      return [...favs, ...widget.allChannels];
+      list = [...favs, ...widget.allChannels];
+    } else {
+      final raw = widget.allChannels.where((c) => c.category == tab).toList();
+      final favs = raw.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
+      final nonFavs = raw.where((c) => !FavoritesProvider.instance.isFavorite(c)).toList();
+      list = [...favs, ...nonFavs];
     }
-    final raw = widget.allChannels.where((c) => c.category == tab).toList();
-    final favs = raw.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
-    final nonFavs = raw.where((c) => !FavoritesProvider.instance.isFavorite(c)).toList();
-    return [...favs, ...nonFavs];
+    _tabChannelLists[tab] = list;
+    return list;
   }
 
   List<Channel> get _currentList => _getChannelsForTab(_tabs[_selectedTab]);
@@ -165,9 +168,20 @@ class _MiniGuideState extends State<MiniGuide> {
   }
 
   void _switchTab(int newTab) {
+    final oldTab = _tabs[_selectedTab];
+    if (_hasFavChangesInCurrentTab) {
+      _dirtyTabs.add(oldTab);
+      _tabChannelLists.remove(oldTab);
+      _hasFavChangesInCurrentTab = false;
+    }
     setState(() {
       _selectedTab = newTab;
-      final newList = _getChannelsForTab(_tabs[_selectedTab]);
+      final curTab = _tabs[_selectedTab];
+      if (_dirtyTabs.contains(curTab)) {
+        _dirtyTabs.remove(curTab);
+        _tabChannelLists.remove(curTab);
+      }
+      final newList = _getChannelsForTab(curTab);
       final playIdx = newList.indexWhere((c) => c.idKey == widget.currentChannel.idKey);
       _focusedIndex = playIdx >= 0 ? playIdx : 0;
     });
@@ -237,7 +251,11 @@ class _MiniGuideState extends State<MiniGuide> {
         k == LogicalKeyboardKey.f3) {
       if (list.isNotEmpty && _focusedIndex < list.length) {
         FavoritesProvider.instance.toggle(list[_focusedIndex]).then((_) {
-          if (mounted) setState(() {});
+          if (mounted) {
+            _hasFavChangesInCurrentTab = true;
+            _dirtyTabs.addAll(_tabs.where((t) => t != _tabs[_selectedTab]));
+            setState(() {});
+          }
         });
       }
       return KeyEventResult.handled;

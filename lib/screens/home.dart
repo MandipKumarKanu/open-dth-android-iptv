@@ -147,6 +147,19 @@ class _HomeState extends State<Home> {
   Timer? _switchTimer;
   static const _switchDelay = Duration(milliseconds: 200);
 
+  final Map<String, List<Channel>> _renderedCategoryLists = {};
+  final Map<String, List<Channel>> _renderedHomeFavs = {};
+  final Set<String> _dirtyCategories = {};
+  bool _hasFavChangesWhileInCat = false;
+
+  void _invalidateAllGrids() {
+    _renderedCategoryLists.clear();
+    _renderedHomeFavs.clear();
+    _dirtyCategories.clear();
+    _grids.clear();
+    _hasFavChangesWhileInCat = false;
+  }
+
   List<Channel> _sortWithFavorites(List<Channel> channels) {
     if (channels.isEmpty) return channels;
     final favs = <Channel>[];
@@ -161,24 +174,36 @@ class _HomeState extends State<Home> {
     return [...favs, ...nonFavs];
   }
 
-  List<Channel> get current {
-    if (categories.isEmpty) return const [];
-    final cat = categories[selected];
-    final raw = byCategory[cat] ?? const [];
+  List<Channel> _getCategoryChannels(String cat) {
+    if (_renderedCategoryLists.containsKey(cat)) {
+      return _renderedCategoryLists[cat]!;
+    }
+    final raw = byCategory[cat] ?? const <Channel>[];
     final filtered = selectedLanguage == 'All'
         ? raw
         : raw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
+
     if (cat == 'Home') {
       final favRaw = byCategory['Favorites'] ?? const <Channel>[];
       final favs = selectedLanguage == 'All'
           ? favRaw
           : favRaw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
-      if (favs.isEmpty) return filtered;
-      return [...favs, ...filtered];
-    } else if (cat != 'Favorites' && cat != 'Recent') {
-      return _sortWithFavorites(filtered);
+      _renderedHomeFavs[cat] = favs;
+      final fullList = favs.isEmpty ? filtered : [...favs, ...filtered];
+      _renderedCategoryLists[cat] = fullList;
+      return fullList;
     }
-    return filtered;
+
+    final list = (cat == 'Favorites' || cat == 'Recent')
+        ? filtered
+        : _sortWithFavorites(filtered);
+    _renderedCategoryLists[cat] = list;
+    return list;
+  }
+
+  List<Channel> get current {
+    if (categories.isEmpty) return const [];
+    return _getCategoryChannels(categories[selected]);
   }
 
   Timer? _okTimer;
@@ -263,7 +288,7 @@ class _HomeState extends State<Home> {
         sideNodes.add(FocusNode());
       }
       // new data: rebuild grids lazily again
-      _grids.clear();
+      _invalidateAllGrids();
       _mounted
         ..clear()
         ..add(cats[selected]);
@@ -285,13 +310,12 @@ class _HomeState extends State<Home> {
     final all = byCategory['All'] ?? byCategory['Home'] ?? [];
     byCategory['Favorites'] = all.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
     byCategory['Recent'] = RecentProvider.instance.filterRecent(all);
-    _grids.clear();
+
+    _hasFavChangesWhileInCat = true;
+    _dirtyCategories.addAll(categories.where((c) => c != _cat));
+
+    // Keep grid and current list stable; only update sidebar count via setState
     setState(() {});
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && current.isNotEmpty) {
-        _focusTile(i.clamp(0, current.length - 1));
-      }
-    });
   }
 
   void _openSearchDialog() {
@@ -314,9 +338,25 @@ class _HomeState extends State<Home> {
 
   void _selectCategory(int i) {
     if (i == selected) return;
+    final oldCat = _cat;
+    if (_hasFavChangesWhileInCat) {
+      _dirtyCategories.add(oldCat);
+      _renderedCategoryLists.remove(oldCat);
+      _renderedHomeFavs.remove(oldCat);
+      _grids.remove(oldCat);
+      _hasFavChangesWhileInCat = false;
+    }
+
     setState(() {
       selected = i;
-      if (!_mounted.contains(_cat)) _mounted.add(_cat);
+      final newCat = categories[selected];
+      if (_dirtyCategories.contains(newCat)) {
+        _dirtyCategories.remove(newCat);
+        _renderedCategoryLists.remove(newCat);
+        _renderedHomeFavs.remove(newCat);
+        _grids.remove(newCat);
+      }
+      if (!_mounted.contains(newCat)) _mounted.add(newCat);
     });
   }
 
@@ -433,12 +473,7 @@ class _HomeState extends State<Home> {
     final n = current.length;
     int? target;
     final isHome = _cat == 'Home';
-    final favRaw = byCategory['Favorites'] ?? const <Channel>[];
-    final favCount = isHome
-        ? (selectedLanguage == 'All'
-            ? favRaw.length
-            : favRaw.where((c) => channelMatchesLanguage(c, selectedLanguage)).length)
-        : 0;
+    final favCount = isHome ? (_renderedHomeFavs['Home']?.length ?? 0) : 0;
 
     if (k == LogicalKeyboardKey.arrowLeft) {
       if (isHome && favCount > 0) {
@@ -547,12 +582,7 @@ class _HomeState extends State<Home> {
       final pos = grid.position;
       double top;
       final isHome = _cat == 'Home';
-      final favRaw = byCategory['Favorites'] ?? const <Channel>[];
-      final favCount = isHome
-          ? (selectedLanguage == 'All'
-              ? favRaw.length
-              : favRaw.where((c) => channelMatchesLanguage(c, selectedLanguage)).length)
-          : 0;
+      final favCount = isHome ? (_renderedHomeFavs['Home']?.length ?? 0) : 0;
 
       if (isHome && favCount > 0) {
         const headerFavHeight = 36.0;
@@ -607,7 +637,7 @@ class _HomeState extends State<Home> {
       final all = byCategory['All'] ?? byCategory['Home'] ?? [];
       byCategory['Favorites'] = all.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
       byCategory['Recent'] = RecentProvider.instance.filterRecent(all);
-      _grids.clear();
+      _invalidateAllGrids();
       setState(() {});
       if (current.isNotEmpty) {
         _focusTile((result ?? i).clamp(0, current.length - 1));
@@ -631,7 +661,7 @@ class _HomeState extends State<Home> {
       final all = byCategory['All'] ?? [];
       byCategory['Favorites'] = all.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
       byCategory['Recent'] = RecentProvider.instance.filterRecent(all);
-      _grids.clear();
+      _invalidateAllGrids();
       setState(() {});
       if (current.isNotEmpty) {
         _focusTile((result ?? i).clamp(0, current.length - 1));
@@ -792,7 +822,7 @@ class _HomeState extends State<Home> {
                     if (isSelectKey(k)) {
                       setState(() {
                         selectedLanguage = lang;
-                        _grids.clear();
+                        _invalidateAllGrids();
                       });
                       return KeyEventResult.handled;
                     }
@@ -806,7 +836,7 @@ class _HomeState extends State<Home> {
                         onTap: () {
                           setState(() {
                             selectedLanguage = lang;
-                            _grids.clear();
+                            _invalidateAllGrids();
                           });
                         },
                         child: AnimatedContainer(
@@ -850,7 +880,7 @@ class _HomeState extends State<Home> {
           child: LayoutBuilder(builder: (context, box) {
             if (_gridSizes != box.biggest) {
               _gridSizes = box.biggest;
-              _grids.clear();
+              _invalidateAllGrids();
             }
             return IndexedStack(
               index: _mounted.indexOf(_cat),
@@ -934,17 +964,14 @@ class _HomeState extends State<Home> {
     final cardW = cellW - 14;
     final cardH = cardW * 0.58;
     rowExtent = cardH + 40;
-    final raw = byCategory[cat] ?? const <Channel>[];
-    final filtered = selectedLanguage == 'All'
-        ? raw
-        : raw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
+    final list = _getCategoryChannels(cat);
 
     if (cat == 'Home') {
-      final favRaw = byCategory['Favorites'] ?? const <Channel>[];
-      final favs = selectedLanguage == 'All'
-          ? favRaw
-          : favRaw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
-      final allList = filtered;
+      final favs = _renderedHomeFavs[cat] ?? const <Channel>[];
+      final raw = byCategory[cat] ?? const <Channel>[];
+      final allList = selectedLanguage == 'All'
+          ? raw
+          : raw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
       final controller = _controllers.putIfAbsent(cat, () => ScrollController());
 
       if (favs.isEmpty) {
@@ -953,14 +980,14 @@ class _HomeState extends State<Home> {
           controller: controller,
           scrollCacheExtent: ScrollCacheExtent.pixels(rowExtent),
           slivers: [
-            SliverToBoxAdapter(
+            const SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(pad, 10, pad, 12),
+                padding: EdgeInsets.fromLTRB(pad, 10, pad, 12),
                 child: Row(
                   children: [
-                    const Icon(Icons.star_outline_rounded, color: Color(0xFFFFD700), size: 18),
-                    const SizedBox(width: 8),
-                    const Text('Tip: Hold OK on any channel to pin it to Favorites at the top',
+                    Icon(Icons.star_outline_rounded, color: Color(0xFFFFD700), size: 18),
+                    SizedBox(width: 8),
+                    Text('Tip: Hold OK on any channel to pin it to Favorites at the top',
                         style: TextStyle(color: Color(0xCCFFFFFF), fontSize: 13, fontWeight: FontWeight.w500)),
                   ],
                 ),
@@ -1101,10 +1128,6 @@ class _HomeState extends State<Home> {
         ],
       );
     }
-
-    final list = (cat == 'Favorites' || cat == 'Recent')
-        ? filtered
-        : _sortWithFavorites(filtered);
 
     if (cat == 'Favorites' && list.isEmpty) {
       return Center(
