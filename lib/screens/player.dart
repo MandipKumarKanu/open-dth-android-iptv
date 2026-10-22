@@ -10,14 +10,17 @@ import '../provider/epg_provider.dart';
 import '../provider/favorites_provider.dart';
 import '../provider/player_settings_provider.dart';
 import '../provider/recent_provider.dart';
+import '../provider/reminder_provider.dart';
 import '../provider/stream_memory_provider.dart';
+import '../services/audio_track_service.dart';
 import '../widgets/channel_icon.dart';
 import '../widgets/mini_guide.dart';
 import '../widgets/timeline_guide.dart';
+import '../widgets/tv_audio_track_dialog.dart';
 import '../widgets/tv_search_dialog.dart';
 import 'home.dart' show isSelectKey;
 
-enum ControlSection { playPause, recall, quality, screenFit }
+enum ControlSection { playPause, recall, quality, screenFit, audioTrack }
 
 /// Full-screen live player.
 /// ◀ (Left) opens Mini-Guide, OK toggles DTH Timeline Guide,
@@ -58,6 +61,8 @@ class _PlayerState extends State<Player> {
   String selectedQuality = 'Auto';
   int focusedQualityIdx = 0;
   String? qualityNotice;
+  List<AudioTrack> _audioTracks = [];
+  AudioTrack? _selectedAudioTrack;
   Timer? _noticeTimer, controlsTimer, infoTimer, startTimer, zapTimer, guideTimer, timelineGuideTimer;
   final List<DateTime> _bufferEvents = [];
 
@@ -89,6 +94,8 @@ class _PlayerState extends State<Player> {
     PlayerSettingsProvider.instance.load().then((_) {
       if (mounted) setState(() {});
     });
+    ReminderProvider.instance.load();
+    ReminderProvider.instance.onReminderDue = _showReminderAlert;
     WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) focus.requestFocus();
@@ -105,18 +112,24 @@ class _PlayerState extends State<Player> {
     timelineGuideTimer?.cancel();
     controlsTimer?.cancel();
     _noticeTimer?.cancel();
+    _reminderAlertTimer?.cancel();
+    if (ReminderProvider.instance.onReminderDue == _showReminderAlert) {
+      ReminderProvider.instance.onReminderDue = null;
+    }
     controller?.dispose();
     focus.dispose();
     WakelockPlus.disable();
     super.dispose();
   }
 
-  Future<void> _open() async {
+  Future<void> _open({bool persistWorkingStream = true}) async {
     final gen = ++_generation;
     final old = controller;
     controller = null;
     failed = false;
     showInfo = true;
+    _audioTracks = [];
+    _selectedAudioTrack = null;
     infoTimer?.cancel();
     setState(() {});
     old?.dispose();
@@ -143,7 +156,19 @@ class _PlayerState extends State<Player> {
       await c.play();
       RecentProvider.instance.add(channel);
       final currentUrl = channel.streamUrls[streamIdx];
-      StreamMemoryProvider.instance.rememberWorkingStream(channel, currentUrl);
+      if (persistWorkingStream) {
+        StreamMemoryProvider.instance.rememberWorkingStream(channel, currentUrl);
+      }
+
+      // Apply saved preferred audio language if set
+      final prefLang = PlayerSettingsProvider.instance.preferredAudioLanguage;
+      if (prefLang.isNotEmpty) {
+        AudioTrackService.setPreferredAudioLanguage(
+          language: prefLang,
+        );
+      }
+      _refreshAudioTracks(c, gen);
+
       if (mounted) {
         if (streamIdx > 0) {
           final res = streamIdx < channel.streamResolutions.length ? channel.streamResolutions[streamIdx] : 'Backup';
@@ -155,6 +180,76 @@ class _PlayerState extends State<Player> {
       if (gen == _generation) _nextStream(gen);
     }
   }
+
+  Future<void> _refreshAudioTracks(VideoPlayerController c, int gen, [int retryCount = 0]) async {
+    try {
+      final tracks = await AudioTrackService.getAudioTracks();
+      if (gen != _generation) return;
+      if (tracks.isNotEmpty) {
+        final active = tracks.where((t) => t.isSelected).firstOrNull ?? tracks.first;
+        if (mounted) {
+          setState(() {
+            _audioTracks = tracks;
+            _selectedAudioTrack = active;
+          });
+        }
+      } else if (retryCount < 4) {
+        // HLS manifests may take a split-second to parse on ExoPlayer
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (mounted && gen == _generation && controller == c) {
+            _refreshAudioTracks(c, gen, retryCount + 1);
+          }
+        });
+      } else {
+        if (mounted && gen == _generation) {
+          setState(() {
+            _audioTracks = [];
+            _selectedAudioTrack = null;
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _selectAudioTrack(AudioTrack track) async {
+    final c = controller;
+    if (c == null) return;
+    final success = await AudioTrackService.selectAudioTrack(
+      groupIndex: track.groupIndex,
+      trackIndex: track.trackIndex,
+    );
+    if (success) {
+      if (track.language.isNotEmpty) {
+        await PlayerSettingsProvider.instance.setPreferredAudioLanguage(track.language);
+      }
+      _showQualityNotice('Audio: ${track.displayName} · Saved as preferred');
+      await _refreshAudioTracks(c, _generation);
+    } else {
+      _showQualityNotice('Failed to switch audio track');
+    }
+  }
+
+  void _openAudioTrackDialog() {
+    if (_audioTracks.isEmpty) return;
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      builder: (ctx) => TvAudioTrackDialog(
+        tracks: _audioTracks,
+        selectedTrack: _selectedAudioTrack,
+        onTrackSelected: (track) async {
+          Navigator.of(ctx).pop();
+          await _selectAudioTrack(track);
+        },
+      ),
+    ).then((_) {
+      if (mounted) {
+        focus.requestFocus();
+      }
+    });
+  }
+
+
 
   Channel? get _previousChannel {
     final prevKey = RecentProvider.instance.getPreviousKey(channel.idKey);
@@ -183,8 +278,22 @@ class _PlayerState extends State<Player> {
           ? channel.streamResolutions[streamIdx]
           : 'lower stream';
       _showQualityNotice('Network slow · Auto-switched to $newRes');
-      _open();
+      // Don't persist the auto-downgrade: a transient blip shouldn't pin this
+      // channel to a lower-quality stream across launches.
+      _open(persistWorkingStream: false);
     }
+  }
+
+  ProgramReminder? _activeReminderAlert;
+  Timer? _reminderAlertTimer;
+
+  void _showReminderAlert(ProgramReminder r) {
+    if (!mounted) return;
+    _reminderAlertTimer?.cancel();
+    setState(() => _activeReminderAlert = r);
+    _reminderAlertTimer = Timer(const Duration(seconds: 14), () {
+      if (mounted) setState(() => _activeReminderAlert = null);
+    });
   }
 
   void _showQualityNotice(String msg) {
@@ -263,6 +372,10 @@ class _PlayerState extends State<Player> {
     controlsTimer?.cancel();
     timelineGuideTimer?.cancel();
     zapTimer?.cancel();
+    // Cancel any pending start-timeout from the previous channel: during the
+    // 350 ms debounce window _generation hasn't changed yet, so it would fire
+    // against the already-updated channel index.
+    startTimer?.cancel();
     zapTimer = Timer(const Duration(milliseconds: 350), _open);
   }
 
@@ -287,15 +400,16 @@ class _PlayerState extends State<Player> {
     _resetTimelineGuideTimer();
   }
 
-  void _closeTimelineGuide() {
+  void _closeTimelineGuide({bool flashInfo = false}) {
     _lastTimelineGuideClose = DateTime.now();
     timelineGuideTimer?.cancel();
     if (mounted) {
       setState(() => showTimelineGuide = false);
       focus.requestFocus();
-      _flashInfo();
+      if (flashInfo) _flashInfo();
     }
   }
+
 
   void _resetTimelineGuideTimer() {
     timelineGuideTimer?.cancel();
@@ -357,15 +471,16 @@ class _PlayerState extends State<Player> {
     _resetGuideTimer();
   }
 
-  void _closeGuide() {
+  void _closeGuide({bool flashInfo = false}) {
     _lastGuideClose = DateTime.now();
     guideTimer?.cancel();
     if (mounted) {
       setState(() => showGuide = false);
       focus.requestFocus();
-      _flashInfo();
+      if (flashInfo) _flashInfo();
     }
   }
+
 
   void _resetGuideTimer() {
     guideTimer?.cancel();
@@ -401,6 +516,33 @@ class _PlayerState extends State<Player> {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
 
+    // Active reminder alert interception (OK to tune, Back to dismiss)
+    if (_activeReminderAlert != null) {
+      if (isSelectKey(k)) {
+        final alert = _activeReminderAlert!;
+        _reminderAlertTimer?.cancel();
+        setState(() => _activeReminderAlert = null);
+        try {
+          final target = allChannels.firstWhere(
+            (c) => c.idKey == alert.channelKey,
+            orElse: () => activeChannels.firstWhere(
+              (c) => c.name.toLowerCase() == alert.channelName.toLowerCase(),
+              orElse: () => channel,
+            ),
+          );
+          _tuneToChannel(target);
+        } catch (_) {}
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.escape ||
+          k == LogicalKeyboardKey.goBack ||
+          k == LogicalKeyboardKey.browserBack) {
+        _reminderAlertTimer?.cancel();
+        setState(() => _activeReminderAlert = null);
+        return KeyEventResult.handled;
+      }
+    }
+
     // 1. Controls Overlay is active
     if (showControls) {
       _resetControlsTimer();
@@ -426,6 +568,8 @@ class _PlayerState extends State<Player> {
           if (focusedQualityIdx > 0) {
             setState(() => focusedQualityIdx--);
           }
+        } else if (_controlSection == ControlSection.audioTrack) {
+          setState(() => _controlSection = ControlSection.screenFit);
         } else if (_controlSection == ControlSection.screenFit) {
           setState(() => _controlSection = ControlSection.playPause);
         } else if (_controlSection == ControlSection.playPause && _previousChannel != null) {
@@ -446,6 +590,8 @@ class _PlayerState extends State<Player> {
           setState(() => _controlSection = ControlSection.playPause);
         } else if (_controlSection == ControlSection.playPause) {
           setState(() => _controlSection = ControlSection.screenFit);
+        } else if (_controlSection == ControlSection.screenFit && _audioTracks.isNotEmpty) {
+          setState(() => _controlSection = ControlSection.audioTrack);
         }
         return KeyEventResult.handled;
       }
@@ -470,6 +616,8 @@ class _PlayerState extends State<Player> {
           }
         } else if (_controlSection == ControlSection.screenFit) {
           _toggleScreenFit();
+        } else if (_controlSection == ControlSection.audioTrack) {
+          _openAudioTrackDialog();
         } else if (_controlSection == ControlSection.quality) {
           if (focusedQualityIdx >= 0 && focusedQualityIdx < qList.length) {
             _setQuality(qList[focusedQualityIdx]);
@@ -525,13 +673,40 @@ class _PlayerState extends State<Player> {
         _openGuide();
       }
       return KeyEventResult.handled;
+    } else if (k == LogicalKeyboardKey.escape ||
+        k == LogicalKeyboardKey.goBack ||
+        k == LogicalKeyboardKey.browserBack) {
+      if (showTimelineGuide) {
+        _closeTimelineGuide();
+        return KeyEventResult.handled;
+      }
+      if (showControls) {
+        _lastControlsClose = DateTime.now();
+        setState(() => showControls = false);
+        return KeyEventResult.handled;
+      }
+      if (showGuide) {
+        _closeGuide();
+        return KeyEventResult.handled;
+      }
+      if (showInfo && !failed) {
+        infoTimer?.cancel();
+        setState(() => showInfo = false);
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
     } else if (isSelectKey(k)) {
       if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350) ||
           DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 350)) {
         return KeyEventResult.handled;
       }
-      // OK key opens full DTH Timeline Guide!
-      _openTimelineGuide();
+      if (!showInfo) {
+        // 1st press: show Info Bar
+        setState(_flashInfo);
+      } else {
+        // 2nd press while Info Bar is already visible: open full DTH Timeline Guide!
+        _openTimelineGuide();
+      }
       return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.arrowRight) {
       setState(_flashInfo);
@@ -567,6 +742,12 @@ class _PlayerState extends State<Player> {
         }
         if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350) ||
             DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 350)) {
+          return;
+        }
+        // If bottom Info Bar is visible, dismiss it first! Do NOT exit the channel!
+        if (showInfo && !failed) {
+          infoTimer?.cancel();
+          setState(() => showInfo = false);
           return;
         }
         Navigator.of(context).pop(index);
@@ -670,9 +851,99 @@ class _PlayerState extends State<Player> {
                     onUserActivity: _resetTimelineGuideTimer,
                   ),
                 ),
+
+              // Reminder Alert Banner (when a scheduled program reminder is due)
+              if (_activeReminderAlert != null)
+                Positioned(
+                  top: 24,
+                  right: 28,
+                  child: _buildReminderToast(_activeReminderAlert!),
+                ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildReminderToast(ProgramReminder r) {
+    return Container(
+      width: 360,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xF00F172A),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFF59E0B).withValues(alpha: 0.35),
+            blurRadius: 18,
+            spreadRadius: 1,
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.8),
+            blurRadius: 12,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: const BoxDecoration(
+              color: Color(0x33F59E0B),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.notifications_active_rounded, color: Color(0xFFFBBF24), size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'PROGRAM REMINDER',
+                      style: TextStyle(
+                        color: Color(0xFFFBBF24),
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: const Color(0x22FFFFFF),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: const Text(
+                        'OK: Tune',
+                        style: TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  r.programTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  'Starting now on ${r.channelName}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -777,7 +1048,7 @@ class _PlayerState extends State<Player> {
 
             const Spacer(),
 
-            // Center Controls: Recall Button (if available) + Play / Pause Hero Button + Screen Fit
+            // Center Controls: Recall Button (if available) + Play / Pause Hero Button + Screen Fit + Audio Track
             Builder(
               builder: (context) {
                 final prev = _previousChannel;
@@ -786,11 +1057,15 @@ class _PlayerState extends State<Player> {
                   children: [
                     if (prev != null) ...[
                       _buildRecallButton(prev),
-                      const SizedBox(width: 40),
+                      const SizedBox(width: 32),
                     ],
                     _buildPlayPauseButton(isPlaying, c),
-                    const SizedBox(width: 40),
+                    const SizedBox(width: 32),
                     _buildScreenFitButton(),
+                    if (_audioTracks.isNotEmpty) ...[
+                      const SizedBox(width: 32),
+                      _buildAudioTrackButton(),
+                    ],
                   ],
                 );
               },
@@ -1012,6 +1287,67 @@ class _PlayerState extends State<Player> {
     );
   }
 
+  Widget _buildAudioTrackButton() {
+    final isFocused = _controlSection == ControlSection.audioTrack;
+    final currentTrack = _selectedAudioTrack;
+    final label = currentTrack != null ? currentTrack.displayName : 'Audio';
+
+    return GestureDetector(
+      onTap: () {
+        _openAudioTrackDialog();
+        _resetControlsTimer();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isFocused ? const Color(0xFFF59E0B) : const Color(0x33FFFFFF),
+              boxShadow: isFocused
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFFF59E0B).withValues(alpha: 0.8),
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                      ),
+                    ]
+                  : [],
+              border: Border.all(
+                color: isFocused ? Colors.white : const Color(0x66FFFFFF),
+                width: 2,
+              ),
+            ),
+            child: Icon(
+              Icons.audiotrack_rounded,
+              size: 38,
+              color: isFocused ? Colors.black : Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 140),
+            child: Text(
+              'AUDIO: ${label.toUpperCase()}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isFocused ? const Color(0xFFF59E0B) : Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.1,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildQualityPill(String q, int i) {
     final isSelected = q == selectedQuality;
     final isFocused = _controlSection == ControlSection.quality && i == focusedQualityIdx;
@@ -1203,6 +1539,44 @@ class _PlayerState extends State<Player> {
                         ),
                       ),
                     ),
+                    if (_audioTracks.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      // Multi-Audio Pill
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0x18F59E0B),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0x55F59E0B), width: 0.8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.volume_up_rounded, size: 10, color: Color(0xFFF59E0B)),
+                            const SizedBox(width: 3),
+                            Text(
+                              (_selectedAudioTrack?.displayName ?? 'AUDIO').toUpperCase(),
+                              style: const TextStyle(
+                                color: Color(0xFFF59E0B),
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            if (_audioTracks.length > 1) ...[
+                              const SizedBox(width: 3),
+                              Text(
+                                '(${_audioTracks.length})',
+                                style: const TextStyle(
+                                  color: Color(0xFFF59E0B),
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
                     const Spacer(),
                     // Live Clock
                     Text(
@@ -1357,23 +1731,31 @@ class _PlayerState extends State<Player> {
       fontSize: 11,
       fontWeight: FontWeight.w500,
     );
-    return const Row(
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('OK: Guide', style: hintStyle),
-        SizedBox(width: 8),
-        Icon(Icons.arrow_back_rounded, size: 12, color: Color(0xFF64748B)),
-        SizedBox(width: 2),
-        Text('Channels', style: hintStyle),
-        SizedBox(width: 8),
-        Icon(Icons.unfold_more_rounded, size: 13, color: Color(0xFF64748B)),
-        SizedBox(width: 2),
-        Text('Zap', style: hintStyle),
-        SizedBox(width: 8),
-        Text('Menu: ', style: hintStyle),
-        Icon(Icons.star_rounded, size: 13, color: Color(0xFFFFD700)),
-        SizedBox(width: 2),
-        Text('Fav', style: hintStyle),
+        if (_audioTracks.length > 1) ...[
+          const Icon(Icons.audiotrack_rounded, size: 12, color: Color(0xFFF59E0B)),
+          const SizedBox(width: 2),
+          const Text('Multi-Audio', style: TextStyle(color: Color(0xFFF59E0B), fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 8),
+        ],
+        const Text('OK: Guide', style: hintStyle),
+        const SizedBox(width: 8),
+        const Text('Back: Hide', style: hintStyle),
+        const SizedBox(width: 8),
+        const Icon(Icons.arrow_back_rounded, size: 12, color: Color(0xFF64748B)),
+        const SizedBox(width: 2),
+        const Text('Channels', style: hintStyle),
+        const SizedBox(width: 8),
+        const Icon(Icons.unfold_more_rounded, size: 13, color: Color(0xFF64748B)),
+        const SizedBox(width: 2),
+        const Text('Zap', style: hintStyle),
+        const SizedBox(width: 8),
+        const Text('Menu: ', style: hintStyle),
+        const Icon(Icons.star_rounded, size: 13, color: Color(0xFFFFD700)),
+        const SizedBox(width: 2),
+        const Text('Fav', style: hintStyle),
       ],
     );
   }

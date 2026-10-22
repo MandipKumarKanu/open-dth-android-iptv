@@ -9,6 +9,7 @@ import '../model/program.dart';
 import '../provider/epg_provider.dart';
 import '../screens/home.dart' show isSelectKey;
 import 'channel_icon.dart';
+import 'tv_program_details_dialog.dart';
 
 /// Full-featured DTH Electronic Program Guide (EPG) Timeline Overlay
 /// matching classic Indian DTH Set-Top-Box guides (Tata Play / Airtel Digital TV).
@@ -37,18 +38,18 @@ class TimelineGuide extends StatefulWidget {
 class _TimelineGuideState extends State<TimelineGuide> {
   final FocusNode _focusNode = FocusNode();
   final ScrollController _channelScrollController = ScrollController();
-  final ScrollController _timelineScrollController = ScrollController();
 
   late List<String> _categories;
   late int _selectedCategoryIdx;
   late List<Channel> _activeCategoryChannels;
   late int _focusedChannelIdx;
+  int _focusedProgIdx = -1;
   late DateTime _baseTime;
   Timer? _clockTimer;
 
   static const double _channelColWidth = 240.0;
   static const double _rowHeight = 44.0;
-  static const double _slotWidth = 180.0; // 30 minutes = 180px
+  double _slotWidth = 180.0; // 30 minutes per slot; width fitted to the screen in build()
   static const int _totalSlots = 8; // 4 hours window (8 x 30m)
 
   @override
@@ -73,7 +74,6 @@ class _TimelineGuideState extends State<TimelineGuide> {
   void dispose() {
     _clockTimer?.cancel();
     _channelScrollController.dispose();
-    _timelineScrollController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
@@ -100,6 +100,7 @@ class _TimelineGuideState extends State<TimelineGuide> {
 
     final curIdx = _activeCategoryChannels.indexWhere((c) => c.idKey == widget.currentChannel.idKey);
     _focusedChannelIdx = curIdx >= 0 ? curIdx : 0;
+    _syncFocusedProgramForChannel();
   }
 
   void _updateChannelsForCategory() {
@@ -112,6 +113,24 @@ class _TimelineGuideState extends State<TimelineGuide> {
     if (_focusedChannelIdx >= _activeCategoryChannels.length) {
       _focusedChannelIdx = max(0, _activeCategoryChannels.length - 1);
     }
+    _syncFocusedProgramForChannel();
+  }
+
+  void _syncFocusedProgramForChannel() {
+    if (_activeCategoryChannels.isEmpty || _focusedChannelIdx >= _activeCategoryChannels.length) {
+      _focusedProgIdx = -1;
+      return;
+    }
+    final ch = _activeCategoryChannels[_focusedChannelIdx];
+    final windowStart = _baseTime;
+    final windowEnd = _baseTime.add(const Duration(minutes: _totalSlots * 30));
+    final progs = EpgProvider.instance.getSchedule(ch, from: windowStart, to: windowEnd);
+    if (progs.isEmpty) {
+      _focusedProgIdx = -1;
+      return;
+    }
+    final liveIdx = progs.indexWhere((p) => p.isLive);
+    _focusedProgIdx = liveIdx >= 0 ? liveIdx : 0;
   }
 
   void _cycleCategory() {
@@ -119,6 +138,7 @@ class _TimelineGuideState extends State<TimelineGuide> {
       _selectedCategoryIdx = (_selectedCategoryIdx + 1) % _categories.length;
       _updateChannelsForCategory();
       _focusedChannelIdx = 0;
+      _syncFocusedProgramForChannel();
     });
     _scrollToFocusedChannel();
   }
@@ -138,9 +158,21 @@ class _TimelineGuideState extends State<TimelineGuide> {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
 
+    final ch = (_activeCategoryChannels.isNotEmpty && _focusedChannelIdx < _activeCategoryChannels.length)
+        ? _activeCategoryChannels[_focusedChannelIdx]
+        : null;
+    final windowStart = _baseTime;
+    final windowEnd = _baseTime.add(const Duration(minutes: _totalSlots * 30));
+    final progs = ch != null
+        ? EpgProvider.instance.getSchedule(ch, from: windowStart, to: windowEnd)
+        : <Program>[];
+
     if (k == LogicalKeyboardKey.arrowUp) {
       if (_focusedChannelIdx > 0) {
-        setState(() => _focusedChannelIdx--);
+        setState(() {
+          _focusedChannelIdx--;
+          _syncFocusedProgramForChannel();
+        });
         _scrollToFocusedChannel();
       }
       return KeyEventResult.handled;
@@ -148,46 +180,49 @@ class _TimelineGuideState extends State<TimelineGuide> {
 
     if (k == LogicalKeyboardKey.arrowDown) {
       if (_focusedChannelIdx < _activeCategoryChannels.length - 1) {
-        setState(() => _focusedChannelIdx++);
+        setState(() {
+          _focusedChannelIdx++;
+          _syncFocusedProgramForChannel();
+        });
         _scrollToFocusedChannel();
       }
       return KeyEventResult.handled;
     }
 
     if (k == LogicalKeyboardKey.arrowRight) {
-      // Scroll timeline right
-      if (_timelineScrollController.hasClients) {
-        final newOffset = _timelineScrollController.offset + _slotWidth;
-        _timelineScrollController.animateTo(
-          newOffset.clamp(0.0, _timelineScrollController.position.maxScrollExtent),
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-        );
+      // Next programme in the visible window; at the end, page the window forward
+      if (progs.isNotEmpty && _focusedProgIdx < progs.length - 1) {
+        setState(() => _focusedProgIdx++);
+      } else {
+        _pageTimeline(1);
       }
       return KeyEventResult.handled;
     }
 
     if (k == LogicalKeyboardKey.arrowLeft) {
-      // Scroll timeline left
-      if (_timelineScrollController.hasClients) {
-        final newOffset = _timelineScrollController.offset - _slotWidth;
-        _timelineScrollController.animateTo(
-          newOffset.clamp(0.0, _timelineScrollController.position.maxScrollExtent),
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-        );
+      // Previous programme in the visible window; at the start, page the window back
+      if (progs.isNotEmpty && _focusedProgIdx > 0) {
+        setState(() => _focusedProgIdx--);
+      } else {
+        _pageTimeline(-1);
       }
       return KeyEventResult.handled;
     }
 
-    if (isSelectKey(k)) {
-      if (_activeCategoryChannels.isNotEmpty && _focusedChannelIdx < _activeCategoryChannels.length) {
-        widget.onTune(_activeCategoryChannels[_focusedChannelIdx]);
+    if (isSelectKey(k) || _isInfoKey(k)) {
+      if (ch != null) {
+        final prog = (progs.isNotEmpty && _focusedProgIdx >= 0 && _focusedProgIdx < progs.length)
+            ? progs[_focusedProgIdx]
+            : (EpgProvider.instance.getNow(ch) ?? (progs.isNotEmpty ? progs.first : null));
+
+        _openProgramDetails(ch, prog, _focusedChannelIdx + 1);
       }
       return KeyEventResult.handled;
     }
 
-    if (k == LogicalKeyboardKey.escape || k == LogicalKeyboardKey.goBack) {
+    if (k == LogicalKeyboardKey.escape ||
+        k == LogicalKeyboardKey.goBack ||
+        k == LogicalKeyboardKey.browserBack) {
       widget.onClose();
       return KeyEventResult.handled;
     }
@@ -203,15 +238,65 @@ class _TimelineGuideState extends State<TimelineGuide> {
     return KeyEventResult.ignored;
   }
 
+  bool _isInfoKey(LogicalKeyboardKey k) =>
+      k == LogicalKeyboardKey.info ||
+      k == LogicalKeyboardKey.f1 ||
+      k == LogicalKeyboardKey.f3 ||
+      k == LogicalKeyboardKey.keyI;
+
+  /// Moves the visible 4-hour window forward (direction 1) or back (-1) and
+  /// re-syncs the focused programme. The window always fits the screen width,
+  /// so no horizontal scrolling (and no header/row desync) can occur.
+  void _pageTimeline(int direction) {
+    setState(() {
+      _baseTime = _baseTime.add(Duration(minutes: direction * _totalSlots * 30));
+      final now = DateTime.now();
+      final floored = DateTime(now.year, now.month, now.day, now.hour, now.minute >= 30 ? 30 : 0);
+      final minBase = floored.subtract(const Duration(hours: 4));
+      final maxBase = floored.add(const Duration(hours: 24));
+      if (_baseTime.isBefore(minBase)) _baseTime = minBase;
+      if (_baseTime.isAfter(maxBase)) _baseTime = maxBase;
+      _syncFocusedProgramForChannel();
+    });
+  }
+
+  void _openProgramDetails(Channel ch, Program? prog, [int? channelNum]) {
+    TvProgramDetailsDialog.show(
+      context: context,
+      channel: ch,
+      program: prog,
+      channelNumber: channelNum ?? (_focusedChannelIdx + 1),
+      onTuneChannel: () {
+        widget.onClose();
+        widget.onTune(ch);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Fit the 4-hour window to the screen so the time ruler and the program
+    // rows always share the same width — free horizontal scrolling can't keep
+    // lazily-built rows in sync, so Left/Right page the window instead.
+    _slotWidth = (MediaQuery.sizeOf(context).width - _channelColWidth) / _totalSlots;
     final now = DateTime.now();
     final activeCat = _categories[_selectedCategoryIdx];
     final focusedChannel = _activeCategoryChannels.isNotEmpty && _focusedChannelIdx < _activeCategoryChannels.length
         ? _activeCategoryChannels[_focusedChannelIdx]
         : null;
 
+    final windowStart = _baseTime;
+    final windowEnd = _baseTime.add(const Duration(minutes: _totalSlots * 30));
+    final focusedProgs = focusedChannel != null
+        ? EpgProvider.instance.getSchedule(focusedChannel, from: windowStart, to: windowEnd)
+        : <Program>[];
+
     final currentProgram = focusedChannel != null ? EpgProvider.instance.getNow(focusedChannel) : null;
+    final displayedProgram = (focusedProgs.isNotEmpty &&
+            _focusedProgIdx >= 0 &&
+            _focusedProgIdx < focusedProgs.length)
+        ? focusedProgs[_focusedProgIdx]
+        : currentProgram;
 
     return Focus(
       focusNode: _focusNode,
@@ -250,7 +335,7 @@ class _TimelineGuideState extends State<TimelineGuide> {
               _buildHeaderBar(activeCat, now),
 
               // 2. Focused Program Summary (Shows show title & description)
-              if (focusedChannel != null) _buildProgramSummary(focusedChannel, currentProgram),
+              if (focusedChannel != null) _buildProgramSummary(focusedChannel, displayedProgram),
 
               // 3. Timeline Header (Time Slots: 12:00 am, 12:30 am, 01:00 am...)
               _buildTimelineHeader(),
@@ -360,70 +445,93 @@ class _TimelineGuideState extends State<TimelineGuide> {
   }
 
   Widget _buildProgramSummary(Channel channel, Program? program) {
-    return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      color: const Color(0x18000000),
-      child: Row(
-        children: [
-          ChannelIcon(
-            key: ValueKey(channel.logoUrl + channel.name),
-            channel: channel,
-            width: 44,
-            height: 28,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        program != null ? program.title : 'Live Broadcast on ${channel.name}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFFFD700),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (program != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        '(${program.timeRangeText})',
-                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                        decoration: BoxDecoration(
-                          color: const Color(0x3338BDF8),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          program.remainingText,
-                          style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                if (program != null && program.desc.isNotEmpty)
-                  Text(
-                    program.desc,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
-                  ),
-              ],
+    return GestureDetector(
+      onTap: () => _openProgramDetails(channel, program, _focusedChannelIdx + 1),
+      child: Container(
+        height: 46,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        color: const Color(0x18000000),
+        child: Row(
+          children: [
+            ChannelIcon(
+              key: ValueKey(channel.logoUrl + channel.name),
+              channel: channel,
+              width: 44,
+              height: 28,
             ),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          program != null ? program.title : 'Live Broadcast on ${channel.name}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFFFD700),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (program != null) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          '(${program.timeRangeText})',
+                          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0x3338BDF8),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            program.remainingText,
+                            style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (program != null && program.desc.isNotEmpty)
+                    Text(
+                      program.desc,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0x2038BDF8),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: const Color(0x4438BDF8), width: 1),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 12, color: Color(0xFF38BDF8)),
+                  SizedBox(width: 4),
+                  Text(
+                    'Synopsis (OK)',
+                    style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10.5, fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -456,10 +564,9 @@ class _TimelineGuideState extends State<TimelineGuide> {
             ),
           ),
 
-          // Right Timeline Header (Scrollable slots)
+          // Right Timeline Header (fits the screen exactly; never scrolls)
           Expanded(
             child: SingleChildScrollView(
-              controller: _timelineScrollController,
               scrollDirection: Axis.horizontal,
               physics: const NeverScrollableScrollPhysics(),
               child: Row(
@@ -531,39 +638,45 @@ class _TimelineGuideState extends State<TimelineGuide> {
           child: Row(
             children: [
               // 1. Channel Number & Name (Left Column)
-              Container(
-                width: _channelColWidth,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: isFocused ? const Color(0xFF0284C7) : const Color(0x150F172A),
-                  border: isFocused
-                      ? const Border(right: BorderSide(color: Colors.white, width: 2))
-                      : const Border(right: BorderSide(color: Color(0x22FFFFFF), width: 1)),
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      '${rowIdx + 1}',
-                      style: TextStyle(
-                        color: isFocused ? Colors.white : const Color(0xFF64748B),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        ch.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+              InkWell(
+                onTap: () {
+                  setState(() => _focusedChannelIdx = rowIdx);
+                  _openProgramDetails(ch, EpgProvider.instance.getNow(ch), rowIdx + 1);
+                },
+                child: Container(
+                  width: _channelColWidth,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: isFocused ? const Color(0xFF0284C7) : const Color(0x150F172A),
+                    border: isFocused
+                        ? const Border(right: BorderSide(color: Colors.white, width: 2))
+                        : const Border(right: BorderSide(color: Color(0x22FFFFFF), width: 1)),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        '${rowIdx + 1}',
                         style: TextStyle(
-                          color: isFocused ? Colors.white : const Color(0xFFE2E8F0),
-                          fontSize: 12.5,
-                          fontWeight: isFocused ? FontWeight.w700 : FontWeight.w500,
+                          color: isFocused ? Colors.white : const Color(0xFF64748B),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          ch.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isFocused ? Colors.white : const Color(0xFFE2E8F0),
+                            fontSize: 12.5,
+                            fontWeight: isFocused ? FontWeight.w700 : FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
 
@@ -575,8 +688,8 @@ class _TimelineGuideState extends State<TimelineGuide> {
                   child: SizedBox(
                     width: _slotWidth * _totalSlots,
                     child: progs.isEmpty
-                        ? _buildEmptyProgramBlock(ch.name, isFocused)
-                        : _buildProgramBlocks(progs, windowStart, windowMinutes, isFocused),
+                        ? _buildEmptyProgramBlock(ch, rowIdx, isFocused)
+                        : _buildProgramBlocks(progs, windowStart, windowMinutes, isFocused, ch, rowIdx),
                   ),
                 ),
               ),
@@ -587,20 +700,26 @@ class _TimelineGuideState extends State<TimelineGuide> {
     );
   }
 
-  Widget _buildEmptyProgramBlock(String channelName, bool isRowFocused) {
-    return Container(
-      width: _slotWidth * _totalSlots,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      alignment: Alignment.centerLeft,
-      decoration: BoxDecoration(
-        color: isRowFocused ? const Color(0x180284C7) : Colors.transparent,
-      ),
-      child: Text(
-        'Live Broadcast · $channelName',
-        style: TextStyle(
-          color: isRowFocused ? Colors.white70 : const Color(0xFF475569),
-          fontSize: 11.5,
-          fontStyle: FontStyle.italic,
+  Widget _buildEmptyProgramBlock(Channel ch, int rowIdx, bool isRowFocused) {
+    return InkWell(
+      onTap: () {
+        setState(() => _focusedChannelIdx = rowIdx);
+        _openProgramDetails(ch, null, rowIdx + 1);
+      },
+      child: Container(
+        width: _slotWidth * _totalSlots,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        alignment: Alignment.centerLeft,
+        decoration: BoxDecoration(
+          color: isRowFocused ? const Color(0x180284C7) : Colors.transparent,
+        ),
+        child: Text(
+          'Live Broadcast · ${ch.name}',
+          style: TextStyle(
+            color: isRowFocused ? Colors.white70 : const Color(0xFF475569),
+            fontSize: 11.5,
+            fontStyle: FontStyle.italic,
+          ),
         ),
       ),
     );
@@ -611,8 +730,10 @@ class _TimelineGuideState extends State<TimelineGuide> {
     DateTime windowStart,
     int windowMinutes,
     bool isRowFocused,
+    Channel ch,
+    int rowIdx,
   ) {
-    const totalWidth = _slotWidth * _totalSlots;
+    final totalWidth = _slotWidth * _totalSlots;
     final blocks = <Widget>[];
 
     for (var i = 0; i < progs.length; i++) {
@@ -624,66 +745,94 @@ class _TimelineGuideState extends State<TimelineGuide> {
       final duration = endOffset - startOffset;
       final blockWidth = (duration / windowMinutes) * totalWidth;
       final isNowPlaying = p.isLive;
+      final isProgFocused = isRowFocused && _focusedProgIdx == i;
 
       blocks.add(
-        Container(
-          width: blockWidth,
-          height: _rowHeight - 4,
-          margin: const EdgeInsets.symmetric(vertical: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: isNowPlaying
-                ? (isRowFocused ? const Color(0xFF0369A1) : const Color(0x350284C7))
-                : (isRowFocused ? const Color(0x22FFFFFF) : const Color(0x0CFFFFFF)),
-            borderRadius: BorderRadius.circular(3),
-            border: Border.all(
-              color: isNowPlaying
-                  ? (isRowFocused ? Colors.cyanAccent : const Color(0x660284C7))
-                  : const Color(0x18FFFFFF),
-              width: 1,
+        InkWell(
+          onTap: () {
+            setState(() {
+              _focusedChannelIdx = rowIdx;
+              _focusedProgIdx = i;
+            });
+            _openProgramDetails(ch, p, rowIdx + 1);
+          },
+          child: Container(
+            width: blockWidth,
+            height: _rowHeight - 4,
+            margin: const EdgeInsets.symmetric(vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: isProgFocused
+                  ? (isNowPlaying ? const Color(0xFF0284C7) : const Color(0xFF1E3A8A))
+                  : (isNowPlaying
+                      ? (isRowFocused ? const Color(0xFF0369A1) : const Color(0x350284C7))
+                      : (isRowFocused ? const Color(0x22FFFFFF) : const Color(0x0CFFFFFF))),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: isProgFocused
+                    ? Colors.white
+                    : (isNowPlaying
+                        ? (isRowFocused ? Colors.cyanAccent : const Color(0x660284C7))
+                        : const Color(0x18FFFFFF)),
+                width: isProgFocused ? 2 : 1,
+              ),
+              boxShadow: isProgFocused
+                  ? [
+                      BoxShadow(
+                        color: (isNowPlaying ? Colors.cyanAccent : Colors.lightBlueAccent).withValues(alpha: 0.5),
+                        blurRadius: 10,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
             ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Row(
-                children: [
-                  if (isNowPlaying) ...[
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: const BoxDecoration(
-                        color: Colors.cyanAccent,
-                        shape: BoxShape.circle,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Row(
+                  children: [
+                    if (isNowPlaying) ...[
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: isProgFocused ? Colors.white : Colors.cyanAccent,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    Expanded(
+                      child: Text(
+                        p.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isProgFocused
+                              ? Colors.white
+                              : (isNowPlaying ? Colors.white : const Color(0xFFCBD5E1)),
+                          fontSize: 11.5,
+                          fontWeight: (isProgFocused || isNowPlaying) ? FontWeight.w800 : FontWeight.w500,
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 4),
                   ],
-                  Expanded(
-                    child: Text(
-                      p.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: isNowPlaying ? Colors.white : const Color(0xFFCBD5E1),
-                        fontSize: 11.5,
-                        fontWeight: isNowPlaying ? FontWeight.w700 : FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              Text(
-                p.timeRangeText,
-                maxLines: 1,
-                overflow: TextOverflow.clip,
-                style: TextStyle(
-                  color: isNowPlaying ? Colors.cyanAccent.withValues(alpha: 0.8) : const Color(0xFF64748B),
-                  fontSize: 9.5,
                 ),
-              ),
-            ],
+                Text(
+                  p.timeRangeText,
+                  maxLines: 1,
+                  overflow: TextOverflow.clip,
+                  style: TextStyle(
+                    color: isProgFocused
+                        ? Colors.white.withValues(alpha: 0.9)
+                        : (isNowPlaying ? Colors.cyanAccent.withValues(alpha: 0.8) : const Color(0xFF64748B)),
+                    fontSize: 9.5,
+                    fontWeight: isProgFocused ? FontWeight.w700 : FontWeight.normal,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -700,11 +849,11 @@ class _TimelineGuideState extends State<TimelineGuide> {
       child: const Row(
         children: [
           _KeyHint(icon: Icons.unfold_more_rounded, text: 'Ch Up/Down'),
-          SizedBox(width: 16),
-          _KeyHint(icon: Icons.swap_horiz_rounded, text: 'Timeline'),
-          SizedBox(width: 16),
-          _KeyHint(icon: Icons.check_circle_outline_rounded, text: 'Tune OK'),
-          SizedBox(width: 16),
+          SizedBox(width: 14),
+          _KeyHint(icon: Icons.swap_horiz_rounded, text: 'Shows Left/Right'),
+          SizedBox(width: 14),
+          _KeyHint(icon: Icons.info_outline_rounded, text: 'OK / Info: Details & Tune'),
+          SizedBox(width: 14),
           _ColorHint(color: Color(0xFF10B981), text: 'Other Genres (C)'),
           Spacer(),
           _KeyHint(icon: Icons.keyboard_return_rounded, text: 'Back: Close'),

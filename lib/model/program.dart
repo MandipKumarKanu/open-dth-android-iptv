@@ -48,6 +48,59 @@ class Program {
     return '$hour:$min $ampm';
   }
 
+  int get durationMinutes => stop.difference(start).inMinutes;
+
+  String get durationText {
+    final min = durationMinutes;
+    if (min >= 60) {
+      final h = min ~/ 60;
+      final m = min % 60;
+      return m > 0 ? '${h}h ${m}m' : '${h}h';
+    }
+    return '$min min';
+  }
+
+  /// Extracts episode info like "Season 20 • Episode 44" or "Episode 2"
+  String? get episodeInfo {
+    final sE = RegExp(r'\bS(\d+)\s*E(\d+)\b', caseSensitive: false).firstMatch(desc) ??
+        RegExp(r'\bS(\d+)\s*E(\d+)\b', caseSensitive: false).firstMatch(title);
+    if (sE != null) {
+      final s = int.tryParse(sE.group(1)!) ?? sE.group(1);
+      final e = int.tryParse(sE.group(2)!) ?? sE.group(2);
+      return 'Season $s • Episode $e';
+    }
+
+    final epOnly = RegExp(r'\b(?:Ep|Episode)\.?\s*(\d+)\b', caseSensitive: false).firstMatch(desc) ??
+        RegExp(r'\b(?:Ep|Episode)\.?\s*(\d+)\b', caseSensitive: false).firstMatch(title);
+    if (epOnly != null) {
+      return 'Episode ${epOnly.group(1)}';
+    }
+
+    return null;
+  }
+
+  /// Cleans the synopsis for display
+  String get synopsis {
+    if (desc.trim().isEmpty) {
+      return 'No detailed synopsis available for this broadcast.';
+    }
+    return desc.trim();
+  }
+
+  /// Detects cast or host highlights if mentioned in the description
+  String? get castHighlight {
+    if (desc.isEmpty) return null;
+    final castRegex = RegExp(
+      r'(?:starring|cast|hosted by|featuring|with)\s*[:\-]?\s*([^.]+)',
+      caseSensitive: false,
+    );
+    final m = castRegex.firstMatch(desc);
+    if (m != null) {
+      return m.group(1)?.trim();
+    }
+    return null;
+  }
+
   Map<String, dynamic> toJson() => {
         't': title,
         'd': desc,

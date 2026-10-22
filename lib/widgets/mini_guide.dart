@@ -241,7 +241,9 @@ class _MiniGuideState extends State<MiniGuide> {
       return KeyEventResult.handled;
     }
 
-    if (k == LogicalKeyboardKey.escape) {
+    if (k == LogicalKeyboardKey.escape ||
+        k == LogicalKeyboardKey.goBack ||
+        k == LogicalKeyboardKey.browserBack) {
       widget.onClose();
       return KeyEventResult.handled;
     }

@@ -22,9 +22,11 @@ class PlayerSettingsProvider extends ChangeNotifier {
 
   static const _fileName = 'player_settings.json';
   ScreenFitMode _screenFit = ScreenFitMode.fill;
+  String _preferredAudioLanguage = '';
   bool _loaded = false;
 
   ScreenFitMode get screenFit => _screenFit;
+  String get preferredAudioLanguage => _preferredAudioLanguage;
 
   Future<void> load() async {
     if (_loaded) return;
@@ -41,6 +43,7 @@ class PlayerSettingsProvider extends ChangeNotifier {
             orElse: () => ScreenFitMode.fill,
           );
         }
+        _preferredAudioLanguage = map['audioLang'] as String? ?? '';
       }
     } catch (_) {}
     _loaded = true;
@@ -50,6 +53,13 @@ class PlayerSettingsProvider extends ChangeNotifier {
   Future<void> setScreenFit(ScreenFitMode mode) async {
     if (_screenFit == mode) return;
     _screenFit = mode;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setPreferredAudioLanguage(String lang) async {
+    if (_preferredAudioLanguage == lang) return;
+    _preferredAudioLanguage = lang;
     notifyListeners();
     await _save();
   }
@@ -65,7 +75,11 @@ class PlayerSettingsProvider extends ChangeNotifier {
     try {
       final dir = await getApplicationSupportDirectory();
       final file = File('${dir.path}/$_fileName');
-      await file.writeAsString(jsonEncode({'screenFit': _screenFit.name}));
+      await file.writeAsString(jsonEncode({
+        'screenFit': _screenFit.name,
+        'audioLang': _preferredAudioLanguage,
+      }));
     } catch (_) {}
   }
 }
+
