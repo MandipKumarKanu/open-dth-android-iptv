@@ -205,10 +205,52 @@ class MainActivity: FlutterActivity() {
                 // In Live TV, fallback to the latest active player
                 playerObj = players.valueAt(players.size() - 1)
             }
-            if (playerObj == null) return null
+            if (playerObj == null) {
+                android.util.Log.w("MainActivity", "getExoPlayer: playerObj is null (players size=${players.size()})")
+                return null
+            }
 
-            val getExoMethod = playerObj.javaClass.getMethod("getExoPlayer")
-            getExoMethod.invoke(playerObj) as? ExoPlayer
+            // 1. Try public getExoPlayer method
+            try {
+                val getExoMethod = playerObj.javaClass.getMethod("getExoPlayer")
+                val ep = getExoMethod.invoke(playerObj) as? ExoPlayer
+                if (ep != null) return ep
+            } catch (_: Exception) {}
+
+            // 2. Try any zero-arg method returning an ExoPlayer / Player
+            for (m in playerObj.javaClass.methods) {
+                if (ExoPlayer::class.java.isAssignableFrom(m.returnType) && m.parameterTypes.isEmpty()) {
+                    try {
+                        m.isAccessible = true
+                        val ep = m.invoke(playerObj) as? ExoPlayer
+                        if (ep != null) {
+                            android.util.Log.d("MainActivity", "Found ExoPlayer via method ${m.name}")
+                            return ep
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // 3. Try any declared field of type ExoPlayer (across class hierarchy)
+            var cls: Class<*>? = playerObj.javaClass
+            while (cls != null && cls != Any::class.java) {
+                for (f in cls.declaredFields) {
+                    if (ExoPlayer::class.java.isAssignableFrom(f.type)) {
+                        try {
+                            f.isAccessible = true
+                            val ep = f.get(playerObj) as? ExoPlayer
+                            if (ep != null) {
+                                android.util.Log.d("MainActivity", "Found ExoPlayer via field ${f.name} in ${cls.simpleName}")
+                                return ep
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                cls = cls.superclass
+            }
+
+            android.util.Log.w("MainActivity", "getExoPlayer: no ExoPlayer found in ${playerObj.javaClass.name}")
+            null
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Failed to retrieve ExoPlayer: ${e.message}", e)
             null
