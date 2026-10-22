@@ -33,6 +33,13 @@ const _icons = <String, IconData>{
   'Infotainment': Icons.explore_rounded,
   'Business': Icons.trending_up_rounded,
   'Devotional': Icons.temple_hindu_rounded,
+  'Lifestyle': Icons.local_florist_rounded,
+  'General': Icons.tv_rounded,
+  'Animation': Icons.animation_rounded,
+  'Education': Icons.school_rounded,
+  'Religious': Icons.temple_hindu_rounded,
+  'Legislative': Icons.gavel_rounded,
+  'Culture': Icons.palette_rounded,
   'Other': Icons.more_horiz_rounded,
 };
 
@@ -122,8 +129,8 @@ class _HomeState extends State<Home> {
 
   String selectedLanguage = 'All';
   final FocusNode _searchNode = FocusNode();
-  final FocusNode _headerSearchNode = FocusNode();
-  late final List<FocusNode> _langNodes = List.generate(indianLanguages.length, (_) => FocusNode());
+  final FocusNode _headerLanguageNode = FocusNode();
+  final ScrollController _sidebarController = ScrollController();
   final List<FocusNode> sideNodes = [];
   /// one node per tile, keyed "category/index"; kept until the screen closes
   final Map<String, FocusNode> tileNodes = {};
@@ -231,10 +238,8 @@ class _HomeState extends State<Home> {
   @override
   void dispose() {
     _searchNode.dispose();
-    _headerSearchNode.dispose();
-    for (final n in _langNodes) {
-      n.dispose();
-    }
+    _headerLanguageNode.dispose();
+    _sidebarController.dispose();
     for (final n in sideNodes) {
       n.dispose();
     }
@@ -313,11 +318,20 @@ class _HomeState extends State<Home> {
     for (final c in channels) {
       (map[c.category] ??= []).add(c);
     }
+    final remainingCats = map.keys
+        .where((k) =>
+            k != 'Home' &&
+            k != 'Favorites' &&
+            k != 'Recent' &&
+            !categoryOrder.contains(k) &&
+            (map[k]?.isNotEmpty ?? false))
+        .toList()
+      ..sort();
     final cats = [
       'Home',
       'Favorites',
-      'Recent',
       ...categoryOrder.where((c) => c != 'Favorites' && c != 'Recent' && (map[c]?.isNotEmpty ?? false)),
+      ...remainingCats,
     ];
     final first = categories.isEmpty;
     final keep = first ? 'Home' : (categories[selected] == 'All' ? 'Home' : categories[selected]);
@@ -455,6 +469,13 @@ class _HomeState extends State<Home> {
         sideNodes[i - 1].requestFocus();
       } else {
         _searchNode.requestFocus();
+        if (_sidebarController.hasClients) {
+          _sidebarController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeInOut,
+          );
+        }
       }
       return KeyEventResult.handled;
     }
@@ -584,9 +605,7 @@ class _HomeState extends State<Home> {
           if (i >= cols) {
             target = i - cols;
           } else {
-            final langIdx = indianLanguages.indexOf(selectedLanguage);
-            final focusIdx = langIdx >= 0 ? langIdx : 0;
-            _langNodes[focusIdx].requestFocus();
+            _headerLanguageNode.requestFocus();
             return KeyEventResult.handled;
           }
         } else if (i < R + F) {
@@ -599,9 +618,7 @@ class _HomeState extends State<Home> {
             final colInRec = (local % cols).clamp(0, R - 1 - lastRecRowStart);
             target = lastRecRowStart + colInRec;
           } else {
-            final langIdx = indianLanguages.indexOf(selectedLanguage);
-            final focusIdx = langIdx >= 0 ? langIdx : 0;
-            _langNodes[focusIdx].requestFocus();
+            _headerLanguageNode.requestFocus();
             return KeyEventResult.handled;
           }
         } else {
@@ -619,9 +636,7 @@ class _HomeState extends State<Home> {
             final colInRec = (local % cols).clamp(0, R - 1 - lastRecRowStart);
             target = lastRecRowStart + colInRec;
           } else {
-            final langIdx = indianLanguages.indexOf(selectedLanguage);
-            final focusIdx = langIdx >= 0 ? langIdx : 0;
-            _langNodes[focusIdx].requestFocus();
+            _headerLanguageNode.requestFocus();
             return KeyEventResult.handled;
           }
         }
@@ -629,9 +644,7 @@ class _HomeState extends State<Home> {
         if (i >= cols) {
           target = i - cols;
         } else {
-          final langIdx = indianLanguages.indexOf(selectedLanguage);
-          final focusIdx = langIdx >= 0 ? langIdx : 0;
-          _langNodes[focusIdx].requestFocus();
+          _headerLanguageNode.requestFocus();
           return KeyEventResult.handled;
         }
       }
@@ -848,22 +861,27 @@ class _HomeState extends State<Home> {
           ),
           const SizedBox(height: 10),
           Expanded(
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              itemCount: categories.length,
-              itemBuilder: (context, i) => _SideItem(
-                node: sideNodes[i],
-                icon: _icons[categories[i]] ?? Icons.tv,
-                label: categories[i],
-                count: byCategory[categories[i]]?.length ?? 0,
-                selected: i == selected,
-                onFocus: () {
-                  _switchTimer?.cancel();
-                  _switchTimer = Timer(_switchDelay, () {
-                    if (mounted) _selectCategory(i);
-                  });
-                },
-                onKey: (e) => _sideKey(i, e),
+            child: SingleChildScrollView(
+              controller: _sidebarController,
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Column(
+                children: [
+                  for (int i = 0; i < categories.length; i++)
+                    _SideItem(
+                      node: sideNodes[i],
+                      icon: _icons[categories[i]] ?? Icons.tv_rounded,
+                      label: categories[i],
+                      count: byCategory[categories[i]]?.length ?? 0,
+                      selected: i == selected,
+                      onFocus: () {
+                        _switchTimer?.cancel();
+                        _switchTimer = Timer(_switchDelay, () {
+                          if (mounted) _selectCategory(i);
+                        });
+                      },
+                      onKey: (e) => _sideKey(i, e),
+                    ),
+                ],
               ),
             ),
           ),
@@ -889,9 +907,9 @@ class _HomeState extends State<Home> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Category title, count, resolution tag & search button
+        // Category title, count, resolution tag & language dropdown button
         Padding(
-          padding: const EdgeInsets.fromLTRB(28, 22, 28, 6),
+          padding: const EdgeInsets.fromLTRB(28, 22, 28, 12),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -909,109 +927,10 @@ class _HomeState extends State<Home> {
                     style: TextStyle(color: dim, fontSize: 10, fontWeight: FontWeight.w600)),
               ),
               const Spacer(),
-              _buildSearchHeaderButton(),
+              _buildLanguageDropdownButton(),
             ],
           ),
         ),
-
-        // Language Filter Chips
-        SizedBox(
-          height: 38,
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
-            scrollDirection: Axis.horizontal,
-            itemCount: indianLanguages.length,
-            itemBuilder: (context, idx) {
-              final lang = indianLanguages[idx];
-              final isSel = selectedLanguage == lang;
-              final node = _langNodes[idx];
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Focus(
-                  focusNode: node,
-                  onKeyEvent: (_, e) {
-                    if (e is KeyUpEvent) return KeyEventResult.ignored;
-                    final k = e.logicalKey;
-                    if (k == LogicalKeyboardKey.arrowLeft) {
-                      if (idx > 0) {
-                        _langNodes[idx - 1].requestFocus();
-                      } else {
-                        sideNodes[selected].requestFocus();
-                      }
-                      return KeyEventResult.handled;
-                    }
-                    if (k == LogicalKeyboardKey.arrowRight) {
-                      if (idx < indianLanguages.length - 1) {
-                        _langNodes[idx + 1].requestFocus();
-                      }
-                      return KeyEventResult.handled;
-                    }
-                    if (k == LogicalKeyboardKey.arrowDown) {
-                      if (current.isNotEmpty) {
-                        _focusTile(0);
-                      }
-                      return KeyEventResult.handled;
-                    }
-                    if (k == LogicalKeyboardKey.arrowUp) {
-                      _headerSearchNode.requestFocus();
-                      return KeyEventResult.handled;
-                    }
-                    if (isSelectKey(k)) {
-                      setState(() {
-                        selectedLanguage = lang;
-                        _invalidateAllGrids();
-                      });
-                      return KeyEventResult.handled;
-                    }
-                    return KeyEventResult.ignored;
-                  },
-                  child: ListenableBuilder(
-                    listenable: node,
-                    builder: (context, _) {
-                      final hasFocus = node.hasFocus;
-                      return GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            selectedLanguage = lang;
-                            _invalidateAllGrids();
-                          });
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 140),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: hasFocus
-                                ? Colors.white
-                                : (isSel ? const Color(0xFF2563EB) : const Color(0x18FFFFFF)),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: hasFocus
-                                  ? Colors.white
-                                  : (isSel ? const Color(0xFF60A5FA) : const Color(0x22FFFFFF)),
-                              width: hasFocus ? 2 : (isSel ? 1.5 : 1),
-                            ),
-                            boxShadow: hasFocus
-                                ? [BoxShadow(color: Colors.white.withValues(alpha: 0.6), blurRadius: 10)]
-                                : (isSel ? [BoxShadow(color: const Color(0xFF2563EB).withValues(alpha: 0.4), blurRadius: 8)] : null),
-                          ),
-                          child: Text(
-                            lang,
-                            style: TextStyle(
-                              color: hasFocus ? Colors.black : (isSel ? Colors.white : Colors.white70),
-                              fontSize: 12.5,
-                              fontWeight: (hasFocus || isSel) ? FontWeight.w700 : FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 6),
 
         Expanded(
           child: LayoutBuilder(builder: (context, box) {
@@ -1032,15 +951,16 @@ class _HomeState extends State<Home> {
     );
   }
 
-  Widget _buildSearchHeaderButton() {
+  Widget _buildLanguageDropdownButton() {
     return Focus(
-      focusNode: _headerSearchNode,
+      focusNode: _headerLanguageNode,
       onKeyEvent: (_, e) {
         if (e is KeyUpEvent) return KeyEventResult.ignored;
         final k = e.logicalKey;
         if (k == LogicalKeyboardKey.arrowDown) {
-          final langIdx = indianLanguages.indexOf(selectedLanguage);
-          _langNodes[langIdx >= 0 ? langIdx : 0].requestFocus();
+          if (current.isNotEmpty) {
+            _focusTile(0);
+          }
           return KeyEventResult.handled;
         }
         if (k == LogicalKeyboardKey.arrowLeft) {
@@ -1048,20 +968,20 @@ class _HomeState extends State<Home> {
           return KeyEventResult.handled;
         }
         if (isSelectKey(k)) {
-          _openSearchDialog();
+          _openLanguageDialog();
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
       },
       child: ListenableBuilder(
-        listenable: _headerSearchNode,
+        listenable: _headerLanguageNode,
         builder: (context, _) {
-          final hasFocus = _headerSearchNode.hasFocus;
+          final hasFocus = _headerLanguageNode.hasFocus;
           return GestureDetector(
-            onTap: _openSearchDialog,
+            onTap: _openLanguageDialog,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
               decoration: BoxDecoration(
                 color: hasFocus ? Colors.white : const Color(0xFF1E293B),
                 borderRadius: BorderRadius.circular(20),
@@ -1076,22 +996,48 @@ class _HomeState extends State<Home> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.search_rounded, size: 15, color: hasFocus ? Colors.black : const Color(0xFF38BDF8)),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Search Channels',
-                    style: TextStyle(
-                      color: hasFocus ? Colors.black : Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  Icon(
+                    Icons.translate_rounded,
+                    size: 15,
+                    color: hasFocus ? Colors.black : const Color(0xFF38BDF8),
                   ),
                   const SizedBox(width: 8),
-                  Icon(Icons.mic_rounded, size: 14, color: hasFocus ? Colors.black87 : const Color(0xFF2DD4BF)),
+                  Text(
+                    selectedLanguage == 'All' ? 'All Languages' : selectedLanguage,
+                    style: TextStyle(
+                      color: hasFocus ? Colors.black : Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    Icons.arrow_drop_down_rounded,
+                    size: 20,
+                    color: hasFocus ? Colors.black : const Color(0xFF94A3B8),
+                  ),
                 ],
               ),
             ),
           );
+        },
+      ),
+    );
+  }
+
+  void _openLanguageDialog() {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => _LanguageSelectionDialog(
+        currentLanguage: selectedLanguage,
+        languages: indianLanguages,
+        onSelect: (lang) {
+          setState(() {
+            selectedLanguage = lang;
+            _invalidateAllGrids();
+          });
+          _headerLanguageNode.requestFocus();
         },
       ),
     );
@@ -1532,7 +1478,15 @@ class _SideItemState extends State<_SideItem> {
       focusNode: widget.node,
       onFocusChange: (f) {
         setState(() => focused = f);
-        if (f) widget.onFocus();
+        if (f) {
+          Scrollable.ensureVisible(
+            context,
+            alignment: 0.35,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeInOut,
+          );
+          widget.onFocus();
+        }
       },
       onKeyEvent: (_, e) => widget.onKey(e),
       child: AnimatedContainer(
@@ -1672,3 +1626,258 @@ class _TileState extends State<_Tile> {
   static const _name = TextStyle(color: Color(0xFFA0A0AA), fontSize: 11.5, fontWeight: FontWeight.w500);
   static const _nameFocused = TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w600);
 }
+
+class _LanguageSelectionDialog extends StatefulWidget {
+  final String currentLanguage;
+  final List<String> languages;
+  final ValueChanged<String> onSelect;
+
+  const _LanguageSelectionDialog({
+    required this.currentLanguage,
+    required this.languages,
+    required this.onSelect,
+  });
+
+  @override
+  State<_LanguageSelectionDialog> createState() => _LanguageSelectionDialogState();
+}
+
+class _LanguageSelectionDialogState extends State<_LanguageSelectionDialog> {
+  late final List<FocusNode> _nodes =
+      List.generate(widget.languages.length, (_) => FocusNode());
+
+  @override
+  void initState() {
+    super.initState();
+    final idx = widget.languages.indexOf(widget.currentLanguage);
+    final focusIdx = idx >= 0 ? idx : 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _nodes.isNotEmpty) {
+        _nodes[focusIdx].requestFocus();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final n in _nodes) {
+      n.dispose();
+    }
+    super.dispose();
+  }
+
+  void _choose(String lang) {
+    widget.onSelect(lang);
+    Navigator.of(context).pop();
+  }
+
+  KeyEventResult _handleKey(int i, KeyEvent e) {
+    if (e is KeyUpEvent) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    const cols = 3;
+    final count = widget.languages.length;
+
+    if (k == LogicalKeyboardKey.arrowLeft) {
+      if (i % cols > 0) {
+        _nodes[i - 1].requestFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight) {
+      if (i % cols < cols - 1 && i + 1 < count) {
+        _nodes[i + 1].requestFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowUp) {
+      if (i - cols >= 0) {
+        _nodes[i - cols].requestFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowDown) {
+      if (i + cols < count) {
+        _nodes[i + cols].requestFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
+    if (isSelectKey(k)) {
+      _choose(widget.languages[i]);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.escape || k == LogicalKeyboardKey.backspace) {
+      Navigator.of(context).pop();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+      child: Container(
+        width: 620,
+        decoration: BoxDecoration(
+          color: const Color(0xFF13131A),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF2E2E42), width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.8),
+              blurRadius: 30,
+              spreadRadius: 4,
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0x2238BDF8),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.translate_rounded, color: Color(0xFF38BDF8), size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Filter by Language',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Select a language to filter channels',
+                      style: TextStyle(color: dim, fontSize: 12),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0x18FFFFFF),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.keyboard_backspace_rounded, size: 14, color: dim),
+                      SizedBox(width: 4),
+                      Text('Back', style: TextStyle(color: dim, fontSize: 11)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Languages Grid (3 columns)
+            Flexible(
+              child: GridView.builder(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  mainAxisExtent: 46,
+                ),
+                itemCount: widget.languages.length,
+                itemBuilder: (context, i) {
+                  final lang = widget.languages[i];
+                  final isCurrent = lang == widget.currentLanguage;
+                  final node = _nodes[i];
+
+                  return Focus(
+                    focusNode: node,
+                    onKeyEvent: (_, e) => _handleKey(i, e),
+                    child: ListenableBuilder(
+                      listenable: node,
+                      builder: (context, _) {
+                        final hasFocus = node.hasFocus;
+                        return GestureDetector(
+                          onTap: () => _choose(lang),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 130),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            decoration: BoxDecoration(
+                              color: hasFocus
+                                  ? Colors.white
+                                  : (isCurrent ? const Color(0x2238BDF8) : const Color(0x14FFFFFF)),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: hasFocus
+                                    ? Colors.white
+                                    : (isCurrent ? const Color(0xFF38BDF8) : const Color(0x22FFFFFF)),
+                                width: hasFocus ? 2 : (isCurrent ? 1.5 : 1),
+                              ),
+                              boxShadow: hasFocus
+                                  ? [
+                                      BoxShadow(
+                                        color: Colors.white.withValues(alpha: 0.6),
+                                        blurRadius: 10,
+                                      )
+                                    ]
+                                  : null,
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    lang == 'All' ? 'All Languages' : lang,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: hasFocus
+                                          ? Colors.black
+                                          : (isCurrent ? const Color(0xFF38BDF8) : Colors.white),
+                                      fontSize: 13,
+                                      fontWeight: hasFocus || isCurrent
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                                if (isCurrent)
+                                  Icon(
+                                    Icons.check_circle_rounded,
+                                    size: 16,
+                                    color: hasFocus ? const Color(0xFF0284C7) : const Color(0xFF38BDF8),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
