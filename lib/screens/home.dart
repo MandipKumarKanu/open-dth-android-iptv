@@ -9,6 +9,8 @@ import '../provider/channels_provider.dart';
 import '../provider/epg_provider.dart';
 import '../provider/favorites_provider.dart';
 import '../provider/recent_provider.dart';
+import '../provider/stream_memory_provider.dart';
+import '../provider/player_settings_provider.dart';
 import '../widgets/channel_icon.dart';
 import '../widgets/tv_search_dialog.dart';
 import 'player.dart';
@@ -242,6 +244,8 @@ class _HomeState extends State<Home> {
     // 0) load saved favorites, recents, and EPG data
     await FavoritesProvider.instance.load();
     await RecentProvider.instance.load();
+    await StreamMemoryProvider.instance.load();
+    await PlayerSettingsProvider.instance.load();
     await EpgProvider.instance.loadCached();
     EpgProvider.instance.refresh();
 

@@ -8,13 +8,15 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../model/channel.dart';
 import '../provider/epg_provider.dart';
 import '../provider/favorites_provider.dart';
+import '../provider/player_settings_provider.dart';
 import '../provider/recent_provider.dart';
+import '../provider/stream_memory_provider.dart';
 import '../widgets/channel_icon.dart';
 import '../widgets/mini_guide.dart';
 import '../widgets/timeline_guide.dart';
 import 'home.dart' show isSelectKey;
 
-enum ControlSection { playPause, recall, quality }
+enum ControlSection { playPause, recall, quality, screenFit }
 
 /// Full-screen live player.
 /// ◀ (Left) opens Mini-Guide, OK toggles DTH Timeline Guide,
@@ -38,7 +40,7 @@ class Player extends StatefulWidget {
 }
 
 class _PlayerState extends State<Player> {
-  static const _startTimeout = Duration(seconds: 12);
+  static const _startTimeout = Duration(seconds: 5);
 
   late List<Channel> activeChannels;
   late List<Channel> allChannels;
@@ -82,6 +84,10 @@ class _PlayerState extends State<Player> {
     super.initState();
     activeChannels = List.from(widget.channels);
     allChannels = widget.allChannels.isNotEmpty ? widget.allChannels : widget.channels;
+    streamIdx = StreamMemoryProvider.instance.getPreferredStreamIndex(channel);
+    PlayerSettingsProvider.instance.load().then((_) {
+      if (mounted) setState(() {});
+    });
     WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) focus.requestFocus();
@@ -135,7 +141,15 @@ class _PlayerState extends State<Player> {
       startTimer?.cancel();
       await c.play();
       RecentProvider.instance.add(channel);
-      if (mounted) setState(_flashInfo);
+      final currentUrl = channel.streamUrls[streamIdx];
+      StreamMemoryProvider.instance.rememberWorkingStream(channel, currentUrl);
+      if (mounted) {
+        if (streamIdx > 0) {
+          final res = streamIdx < channel.streamResolutions.length ? channel.streamResolutions[streamIdx] : 'Backup';
+          _showQualityNotice('Connected to backup stream ($res) · Saved as default');
+        }
+        setState(_flashInfo);
+      }
     } catch (_) {
       if (gen == _generation) _nextStream(gen);
     }
@@ -195,17 +209,33 @@ class _PlayerState extends State<Player> {
         }
       }
       streamIdx = target >= 0 ? target : 0;
+      StreamMemoryProvider.instance.rememberWorkingStream(channel, channel.streamUrls[streamIdx]);
       _showQualityNotice('Quality locked to $q');
       _open();
     }
     setState(() {});
   }
 
-  /// Current stream failed: try the channel's next backup, else show the error.
+  void _toggleScreenFit() async {
+    final next = await PlayerSettingsProvider.instance.cycleScreenFit();
+    _showQualityNotice('Screen Fit: ${next.label} (${next.description})');
+    if (mounted) setState(() {});
+  }
+
+  /// Current stream failed: report failure and try the channel's next backup.
   void _nextStream(int gen) {
     if (gen != _generation || !mounted) return;
+    final failedUrl = (streamIdx < channel.streamUrls.length) ? channel.streamUrls[streamIdx] : '';
+    if (failedUrl.isNotEmpty) {
+      StreamMemoryProvider.instance.reportStreamFailure(channel, failedUrl);
+    }
+
     if (streamIdx + 1 < channel.streamUrls.length) {
       streamIdx++;
+      final nextRes = streamIdx < channel.streamResolutions.length
+          ? channel.streamResolutions[streamIdx]
+          : 'backup ${streamIdx + 1}';
+      _showQualityNotice('Stream $streamIdx unavailable · Trying backup $nextRes...');
       _open();
     } else {
       startTimer?.cancel();
@@ -222,13 +252,15 @@ class _PlayerState extends State<Player> {
     setState(() {
       index = (index + delta) % n;
       if (index < 0) index += n;
-      streamIdx = 0;
+      streamIdx = StreamMemoryProvider.instance.getPreferredStreamIndex(activeChannels[index]);
       selectedQuality = 'Auto';
       showInfo = true;
       showControls = false;
+      showTimelineGuide = false;
     });
     infoTimer?.cancel();
     controlsTimer?.cancel();
+    timelineGuideTimer?.cancel();
     zapTimer?.cancel();
     zapTimer = Timer(const Duration(milliseconds: 350), _open);
   }
@@ -339,7 +371,7 @@ class _PlayerState extends State<Player> {
     }
     setState(() {
       index = n;
-      streamIdx = 0;
+      streamIdx = StreamMemoryProvider.instance.getPreferredStreamIndex(newChannel);
       selectedQuality = 'Auto';
       showControls = false;
     });
@@ -377,6 +409,8 @@ class _PlayerState extends State<Player> {
           if (focusedQualityIdx > 0) {
             setState(() => focusedQualityIdx--);
           }
+        } else if (_controlSection == ControlSection.screenFit) {
+          setState(() => _controlSection = ControlSection.playPause);
         } else if (_controlSection == ControlSection.playPause && _previousChannel != null) {
           setState(() => _controlSection = ControlSection.recall);
         } else {
@@ -393,6 +427,8 @@ class _PlayerState extends State<Player> {
           }
         } else if (_controlSection == ControlSection.recall) {
           setState(() => _controlSection = ControlSection.playPause);
+        } else if (_controlSection == ControlSection.playPause) {
+          setState(() => _controlSection = ControlSection.screenFit);
         }
         return KeyEventResult.handled;
       }
@@ -415,6 +451,8 @@ class _PlayerState extends State<Player> {
           if (prev != null) {
             _tuneToChannel(prev);
           }
+        } else if (_controlSection == ControlSection.screenFit) {
+          _toggleScreenFit();
         } else if (_controlSection == ControlSection.quality) {
           if (focusedQualityIdx >= 0 && focusedQualityIdx < qList.length) {
             _setQuality(qList[focusedQualityIdx]);
@@ -446,6 +484,9 @@ class _PlayerState extends State<Player> {
         k == LogicalKeyboardKey.f1 ||
         k == LogicalKeyboardKey.f3) {
       _openControls();
+      return KeyEventResult.handled;
+    } else if (k == LogicalKeyboardKey.digit0 || k == LogicalKeyboardKey.f2) {
+      _toggleScreenFit();
       return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.mediaPlayPause) {
       FavoritesProvider.instance.toggle(channel).then((_) {
@@ -517,10 +558,14 @@ class _PlayerState extends State<Player> {
             fit: StackFit.expand,
             children: [
               if (ready)
-                Center(
-                  child: AspectRatio(
-                    aspectRatio: c.value.aspectRatio > 0 ? c.value.aspectRatio : 16 / 9,
-                    child: VideoPlayer(c),
+                Positioned.fill(
+                  child: FittedBox(
+                    fit: PlayerSettingsProvider.instance.screenFit.boxFit,
+                    child: SizedBox(
+                      width: c.value.size.width > 0 ? c.value.size.width : 16,
+                      height: c.value.size.height > 0 ? c.value.size.height : 9,
+                      child: VideoPlayer(c),
+                    ),
                   ),
                 ),
               if (!failed)
@@ -698,7 +743,7 @@ class _PlayerState extends State<Player> {
 
             const Spacer(),
 
-            // Center Controls: Recall Button (if available) + Play / Pause Hero Button
+            // Center Controls: Recall Button (if available) + Play / Pause Hero Button + Screen Fit
             Builder(
               builder: (context) {
                 final prev = _previousChannel;
@@ -707,9 +752,11 @@ class _PlayerState extends State<Player> {
                   children: [
                     if (prev != null) ...[
                       _buildRecallButton(prev),
-                      const SizedBox(width: 48),
+                      const SizedBox(width: 40),
                     ],
                     _buildPlayPauseButton(isPlaying, c),
+                    const SizedBox(width: 40),
+                    _buildScreenFitButton(),
                   ],
                 );
               },
@@ -865,6 +912,65 @@ class _PlayerState extends State<Player> {
               fontSize: 12,
               fontWeight: FontWeight.w800,
               letterSpacing: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScreenFitButton() {
+    final isFocused = _controlSection == ControlSection.screenFit;
+    final mode = PlayerSettingsProvider.instance.screenFit;
+    return GestureDetector(
+      onTap: () {
+        _toggleScreenFit();
+        _resetControlsTimer();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isFocused ? const Color(0xFF38BDF8) : const Color(0x33FFFFFF),
+              boxShadow: isFocused
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFF38BDF8).withValues(alpha: 0.8),
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                      ),
+                    ]
+                  : [],
+              border: Border.all(
+                color: isFocused ? Colors.white : const Color(0x66FFFFFF),
+                width: 2,
+              ),
+            ),
+            child: Icon(
+              Icons.aspect_ratio_rounded,
+              size: 38,
+              color: isFocused ? Colors.black : Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 140),
+            child: Text(
+              'FIT: ${mode.label.toUpperCase()}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isFocused ? const Color(0xFF38BDF8) : Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.1,
+              ),
             ),
           ),
         ],
