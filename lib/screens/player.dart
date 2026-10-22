@@ -14,6 +14,7 @@ import '../provider/stream_memory_provider.dart';
 import '../widgets/channel_icon.dart';
 import '../widgets/mini_guide.dart';
 import '../widgets/timeline_guide.dart';
+import '../widgets/tv_search_dialog.dart';
 import 'home.dart' show isSelectKey;
 
 enum ControlSection { playPause, recall, quality, screenFit }
@@ -327,6 +328,22 @@ class _PlayerState extends State<Player> {
     });
   }
 
+  void _openVoiceSearch() {
+    if (showTimelineGuide) _closeTimelineGuide();
+    if (showGuide) _closeGuide();
+    setState(() => showControls = false);
+    showDialog(
+      context: context,
+      builder: (_) => TvSearchDialog(
+        allChannels: allChannels,
+        autoStartVoice: true,
+        onChannelSelect: (ch) {
+          _tuneToChannel(ch);
+        },
+      ),
+    );
+  }
+
   void _openGuide() {
     setState(() {
       showGuide = true;
@@ -488,6 +505,12 @@ class _PlayerState extends State<Player> {
     } else if (k == LogicalKeyboardKey.digit0 || k == LogicalKeyboardKey.f2) {
       _toggleScreenFit();
       return KeyEventResult.handled;
+    } else if (k.keyId == 0x002000000e7 || // KEYCODE_VOICE_ASSIST
+        k.keyId == 0x00200000054 || // KEYCODE_SEARCH
+        k.keyId == 0x002000000db || // KEYCODE_ASSIST
+        k == LogicalKeyboardKey.f5) {
+      _openVoiceSearch();
+      return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.mediaPlayPause) {
       FavoritesProvider.instance.toggle(channel).then((_) {
         if (mounted) setState(_flashInfo);
@@ -587,8 +610,19 @@ class _PlayerState extends State<Player> {
                     const Text('This channel isn’t available right now',
                         style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
-                    Text('OK: Timeline Guide · Menu: Controls · ▲ ▼: Another channel · ◀: Channels',
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('OK: Timeline Guide  ·  Menu: Controls  ·  ',
+                            style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                        Icon(Icons.unfold_more_rounded, size: 14, color: Colors.white.withValues(alpha: 0.6)),
+                        const SizedBox(width: 2),
+                        Text('Zap  ·  ', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                        Icon(Icons.arrow_back_rounded, size: 13, color: Colors.white.withValues(alpha: 0.6)),
+                        const SizedBox(width: 2),
+                        Text('Channels', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                      ],
+                    ),
                   ]),
                 ),
 
@@ -801,8 +835,8 @@ class _PlayerState extends State<Player> {
                   ),
                   Text(
                     _previousChannel != null
-                        ? 'OK: Select  ·  ◀ / ▶: Switch Controls  ·  ▲: Quality  ·  Back: Close'
-                        : 'OK: ${isPlaying ? 'Pause' : 'Play'}  ·  ▲: Quality  ·  ◀: Guide  ·  Back: Close',
+                        ? 'OK: Select  ·  Left/Right: Switch  ·  Up: Quality  ·  Back: Close'
+                        : 'OK: ${isPlaying ? 'Pause' : 'Play'}  ·  Up: Quality  ·  Left: Guide  ·  Back: Close',
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
                   ),
                 ],
@@ -1284,14 +1318,7 @@ class _PlayerState extends State<Player> {
                         ),
                       ],
                       const Spacer(),
-                      const Text(
-                        'OK: Guide  ·  ◀: Channels  ·  ▲▼: Zap  ·  Menu: ⭐',
-                        style: TextStyle(
-                          color: Color(0xFF64748B),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+                      _buildInfoBarRemoteHints(),
                     ],
                   ),
                 ] else ...[
@@ -1312,14 +1339,7 @@ class _PlayerState extends State<Player> {
                         style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
                       ),
                       const Spacer(),
-                      const Text(
-                        'OK: Guide  ·  ◀: Channels  ·  ▲▼: Zap  ·  Menu: ⭐',
-                        style: TextStyle(
-                          color: Color(0xFF64748B),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+                      _buildInfoBarRemoteHints(),
                     ],
                   ),
                 ],
@@ -1330,5 +1350,33 @@ class _PlayerState extends State<Player> {
       ),
     );
   }
+
+  Widget _buildInfoBarRemoteHints() {
+    const hintStyle = TextStyle(
+      color: Color(0xFF64748B),
+      fontSize: 11,
+      fontWeight: FontWeight.w500,
+    );
+    return const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('OK: Guide', style: hintStyle),
+        SizedBox(width: 8),
+        Icon(Icons.arrow_back_rounded, size: 12, color: Color(0xFF64748B)),
+        SizedBox(width: 2),
+        Text('Channels', style: hintStyle),
+        SizedBox(width: 8),
+        Icon(Icons.unfold_more_rounded, size: 13, color: Color(0xFF64748B)),
+        SizedBox(width: 2),
+        Text('Zap', style: hintStyle),
+        SizedBox(width: 8),
+        Text('Menu: ', style: hintStyle),
+        Icon(Icons.star_rounded, size: 13, color: Color(0xFFFFD700)),
+        SizedBox(width: 2),
+        Text('Fav', style: hintStyle),
+      ],
+    );
+  }
 }
+
 

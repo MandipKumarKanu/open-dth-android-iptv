@@ -326,11 +326,12 @@ class _HomeState extends State<Home> {
     setState(() {});
   }
 
-  void _openSearchDialog() {
+  void _openSearchDialog({bool autoStartVoice = false}) {
     showDialog(
       context: context,
       builder: (_) => TvSearchDialog(
         allChannels: byCategory['All'] ?? byCategory['Home'] ?? [],
+        autoStartVoice: autoStartVoice,
         onChannelSelect: (ch) {
           final all = byCategory['All'] ?? byCategory['Home'] ?? [];
           final idx = all.indexWhere((c) => c.idKey == ch.idKey);
@@ -380,9 +381,19 @@ class _HomeState extends State<Home> {
     setState(() => _mounted.add(next));
   }
 
+  bool _isVoiceKey(LogicalKeyboardKey k) =>
+      k.keyId == 0x002000000e7 || // KEYCODE_VOICE_ASSIST
+      k.keyId == 0x00200000054 || // KEYCODE_SEARCH
+      k.keyId == 0x002000000db || // KEYCODE_ASSIST
+      k == LogicalKeyboardKey.f5;
+
   KeyEventResult _searchKey(KeyEvent e) {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
+    if (_isVoiceKey(k)) {
+      _openSearchDialog(autoStartVoice: true);
+      return KeyEventResult.handled;
+    }
     if (k == LogicalKeyboardKey.arrowDown) {
       if (sideNodes.isNotEmpty) sideNodes[0].requestFocus();
       return KeyEventResult.handled;
@@ -398,6 +409,10 @@ class _HomeState extends State<Home> {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     _lastInput = DateTime.now();
     final k = e.logicalKey;
+    if (_isVoiceKey(k)) {
+      _openSearchDialog(autoStartVoice: true);
+      return KeyEventResult.handled;
+    }
     if (k == LogicalKeyboardKey.arrowUp) {
       if (i > 0) {
         sideNodes[i - 1].requestFocus();
@@ -459,6 +474,12 @@ class _HomeState extends State<Home> {
         }
         return KeyEventResult.handled;
       }
+      return KeyEventResult.handled;
+    }
+
+    // Voice Search on remote Google Assistant / Mic button
+    if (_isVoiceKey(k)) {
+      _openSearchDialog(autoStartVoice: true);
       return KeyEventResult.handled;
     }
 
@@ -957,6 +978,8 @@ class _HomeState extends State<Home> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.mic_rounded, size: 14, color: hasFocus ? Colors.black87 : const Color(0xFF2DD4BF)),
                 ],
               ),
             ),
@@ -1282,6 +1305,12 @@ class _SearchSidebarTileState extends State<_SearchSidebarTile> {
                   fontSize: 14,
                   fontWeight: focused ? FontWeight.w700 : FontWeight.w500,
                 ),
+              ),
+              const Spacer(),
+              Icon(
+                Icons.mic_rounded,
+                size: 16,
+                color: focused ? Colors.black54 : const Color(0xFF2DD4BF),
               ),
             ],
           ),

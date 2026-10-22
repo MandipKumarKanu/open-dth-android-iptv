@@ -324,9 +324,16 @@ class _MiniGuideState extends State<MiniGuide> {
             style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
           ),
           const Spacer(),
-          Text(
-            '◀ ▶ Tabs',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.swap_horiz_rounded, size: 14, color: Colors.white.withValues(alpha: 0.5)),
+              const SizedBox(width: 4),
+              Text(
+                'Categories',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 11.5),
+              ),
+            ],
           ),
         ],
       ),
@@ -474,18 +481,29 @@ class _MiniGuideState extends State<MiniGuide> {
                           ],
                           () {
                             final prog = EpgProvider.instance.getNow(c);
+                            final color = isFocused
+                                ? (prog != null ? const Color(0xFF0369A1) : Colors.black54)
+                                : (prog != null ? const Color(0xFF38BDF8) : Colors.white.withValues(alpha: 0.5));
                             return Expanded(
-                              child: Text(
-                                prog != null ? '▶ ${prog.title}' : c.category,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: isFocused
-                                      ? (prog != null ? const Color(0xFF0369A1) : Colors.black54)
-                                      : (prog != null ? const Color(0xFF38BDF8) : Colors.white.withValues(alpha: 0.5)),
-                                  fontSize: 11,
-                                  fontWeight: prog != null ? FontWeight.w600 : FontWeight.w400,
-                                ),
+                              child: Row(
+                                children: [
+                                  if (prog != null) ...[
+                                    Icon(Icons.play_arrow_rounded, size: 12, color: color),
+                                    const SizedBox(width: 2),
+                                  ],
+                                  Expanded(
+                                    child: Text(
+                                      prog != null ? prog.title : c.category,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: color,
+                                        fontSize: 11,
+                                        fontWeight: prog != null ? FontWeight.w600 : FontWeight.w400,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             );
                           }(),
@@ -557,7 +575,14 @@ class _MiniGuideState extends State<MiniGuide> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text('OK to Watch', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11.5)),
-          Text('Menu: ⭐ Fav', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11.5)),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Menu: ', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11.5)),
+              const Icon(Icons.star_rounded, color: Color(0xFFFFD700), size: 14),
+              Text(' Fav', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11.5)),
+            ],
+          ),
           Text('Back to Exit', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11.5)),
         ],
       ),

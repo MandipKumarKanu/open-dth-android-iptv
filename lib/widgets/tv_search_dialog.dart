@@ -3,16 +3,19 @@ import 'package:flutter/services.dart';
 
 import '../model/channel.dart';
 import '../screens/home.dart' show isSelectKey;
+import '../services/voice_search_service.dart';
 import 'channel_icon.dart';
 
 class TvSearchDialog extends StatefulWidget {
   final List<Channel> allChannels;
   final ValueChanged<Channel> onChannelSelect;
+  final bool autoStartVoice;
 
   const TvSearchDialog({
     super.key,
     required this.allChannels,
     required this.onChannelSelect,
+    this.autoStartVoice = false,
   });
 
   @override
@@ -29,6 +32,8 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
   int _kbCol = 0;
   int _focusedResultIdx = 0;
   bool _inResults = false;
+  bool _isListening = false;
+  String? _voiceHeardText;
 
   static const List<List<String>> _keys = [
     ['A', 'B', 'C', 'D', 'E', 'F'],
@@ -37,8 +42,46 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
     ['S', 'T', 'U', 'V', 'W', 'X'],
     ['Y', 'Z', '0', '1', '2', '3'],
     ['4', '5', '6', '7', '8', '9'],
-    ['SPACE', 'DEL', 'CLEAR', 'CLOSE'],
+    ['MIC', 'SPACE', 'DEL', 'CLEAR', 'CLOSE'],
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoStartVoice) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _triggerVoiceSearch();
+      });
+    }
+  }
+
+  Future<void> _triggerVoiceSearch() async {
+    if (_isListening) return;
+    setState(() {
+      _isListening = true;
+      _voiceHeardText = null;
+    });
+
+    final text = await VoiceSearchService.startListening();
+    if (!mounted) return;
+
+    setState(() {
+      _isListening = false;
+      if (text != null && text.trim().isNotEmpty) {
+        _query = text.trim().toUpperCase();
+        _voiceHeardText = text.trim();
+        final results = _filteredChannels;
+        if (results.isNotEmpty) {
+          _inResults = true;
+          _focusedResultIdx = 0;
+          _gridFocus.requestFocus();
+        } else {
+          _inResults = false;
+          _keyboardFocus.requestFocus();
+        }
+      }
+    });
+  }
 
   List<Channel> get _filteredChannels {
     final q = _query.trim().toLowerCase();
@@ -51,14 +94,19 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
   }
 
   void _onKeyPress(String key) {
-    if (key == 'SPACE') {
+    if (key == 'MIC') {
+      _triggerVoiceSearch();
+    } else if (key == 'SPACE') {
       setState(() => _query += ' ');
     } else if (key == 'DEL') {
       if (_query.isNotEmpty) {
         setState(() => _query = _query.substring(0, _query.length - 1));
       }
     } else if (key == 'CLEAR') {
-      setState(() => _query = '');
+      setState(() {
+        _query = '';
+        _voiceHeardText = null;
+      });
     } else if (key == 'CLOSE') {
       Navigator.of(context).pop();
     } else {
@@ -69,6 +117,15 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
   KeyEventResult _handleKey(FocusNode _, KeyEvent e) {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
+
+    // Voice Remote Mic Key / Assistant Key
+    if (k.keyId == 0x002000000e7 || // KEYCODE_VOICE_ASSIST
+        k.keyId == 0x00200000054 || // KEYCODE_SEARCH
+        k.keyId == 0x002000000db || // KEYCODE_ASSIST
+        k == LogicalKeyboardKey.f5) {
+      _triggerVoiceSearch();
+      return KeyEventResult.handled;
+    }
 
     // Physical typing support (voice remotes, USB keyboards, ADB)
     final char = e.character;
@@ -269,12 +326,70 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
                       ),
                     ),
                     const SizedBox(width: 14),
-                    Text(
-                      _inResults ? '◀: Keyboard · OK: Play' : '▶: Go to Results · Back: Exit',
-                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    // Voice Search / Mic Action Button
+                    GestureDetector(
+                      onTap: _triggerVoiceSearch,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _isListening ? const Color(0xFFE11D48) : const Color(0xFF0F766E),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: _isListening ? const Color(0xFFFB7185) : const Color(0xFF2DD4BF),
+                            width: 1.5,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: (_isListening ? const Color(0xFFE11D48) : const Color(0xFF0F766E)).withValues(alpha: 0.45),
+                              blurRadius: 10,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(_isListening ? Icons.mic : Icons.mic_rounded, size: 20, color: Colors.white),
+                            const SizedBox(width: 8),
+                            Text(
+                              _isListening ? 'Listening...' : 'Voice Search',
+                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _inResults ? Icons.arrow_back_rounded : Icons.arrow_forward_rounded,
+                          size: 13,
+                          color: Colors.white54,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _inResults ? 'Keyboard · OK: Play' : 'Results · Back: Exit',
+                          style: const TextStyle(color: Colors.white54, fontSize: 12),
+                        ),
+                      ],
                     ),
                   ],
                 ),
+                if (_voiceHeardText != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(Icons.mic_rounded, size: 14, color: Color(0xFF2DD4BF)),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Heard: "$_voiceHeardText"',
+                        style: const TextStyle(color: Color(0xFF2DD4BF), fontSize: 12.5, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 18),
 
                 // Main Area: Virtual Keyboard on Left, Results on Right
@@ -430,6 +545,7 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
   Widget _buildKeyTile(String label, int r, int c) {
     final isFocused = !_inResults && _kbRow == r && _kbCol == c;
     final isAction = label.length > 1;
+    final isMic = label == 'MIC';
 
     return Expanded(
       flex: isAction ? 2 : 1,
@@ -440,30 +556,54 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
         decoration: BoxDecoration(
           color: isFocused
               ? Colors.white
-              : isAction
-                  ? const Color(0xFF1E293B)
-                  : const Color(0x14FFFFFF),
+              : isMic
+                  ? const Color(0xFF0F766E)
+                  : isAction
+                      ? const Color(0xFF1E293B)
+                      : const Color(0x14FFFFFF),
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
-            color: isFocused ? Colors.white : const Color(0x1AFFFFFF),
-            width: isFocused ? 1.5 : 1,
+            color: isFocused
+                ? Colors.white
+                : isMic
+                    ? const Color(0xFF2DD4BF)
+                    : const Color(0x1AFFFFFF),
+            width: isFocused || isMic ? 1.5 : 1,
           ),
           boxShadow: isFocused
               ? [BoxShadow(color: Colors.white.withValues(alpha: 0.6), blurRadius: 8)]
-              : null,
+              : isMic
+                  ? [BoxShadow(color: const Color(0xFF0F766E).withValues(alpha: 0.4), blurRadius: 6)]
+                  : null,
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isFocused
-                ? Colors.black
-                : isAction
-                    ? const Color(0xFF38BDF8)
-                    : Colors.white,
-            fontSize: isAction ? 11 : 13,
-            fontWeight: isFocused || isAction ? FontWeight.w800 : FontWeight.w600,
-          ),
-        ),
+        child: isMic
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.mic_rounded, size: 14, color: isFocused ? Colors.black : const Color(0xFF2DD4BF)),
+                  const SizedBox(width: 4),
+                  Text(
+                    'MIC',
+                    style: TextStyle(
+                      color: isFocused ? Colors.black : Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              )
+            : Text(
+                label,
+                style: TextStyle(
+                  color: isFocused
+                      ? Colors.black
+                      : isAction
+                          ? const Color(0xFF38BDF8)
+                          : Colors.white,
+                  fontSize: isAction ? 11 : 13,
+                  fontWeight: isFocused || isAction ? FontWeight.w800 : FontWeight.w600,
+                ),
+              ),
       ),
     );
   }
