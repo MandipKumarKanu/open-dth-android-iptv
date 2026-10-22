@@ -17,6 +17,7 @@ const sidebarBg = Color(0xFF131318);
 const dim = Color(0xFF8E8E98);
 
 const _icons = <String, IconData>{
+  'Home': Icons.home_rounded,
   'All': Icons.apps_rounded,
   'Favorites': Icons.star_rounded,
   'Recent': Icons.history_rounded,
@@ -146,11 +147,38 @@ class _HomeState extends State<Home> {
   Timer? _switchTimer;
   static const _switchDelay = Duration(milliseconds: 200);
 
+  List<Channel> _sortWithFavorites(List<Channel> channels) {
+    if (channels.isEmpty) return channels;
+    final favs = <Channel>[];
+    final nonFavs = <Channel>[];
+    for (final c in channels) {
+      if (FavoritesProvider.instance.isFavorite(c)) {
+        favs.add(c);
+      } else {
+        nonFavs.add(c);
+      }
+    }
+    return [...favs, ...nonFavs];
+  }
+
   List<Channel> get current {
     if (categories.isEmpty) return const [];
-    final raw = byCategory[categories[selected]] ?? const [];
-    if (selectedLanguage == 'All') return raw;
-    return raw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
+    final cat = categories[selected];
+    final raw = byCategory[cat] ?? const [];
+    final filtered = selectedLanguage == 'All'
+        ? raw
+        : raw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
+    if (cat == 'Home') {
+      final favRaw = byCategory['Favorites'] ?? const <Channel>[];
+      final favs = selectedLanguage == 'All'
+          ? favRaw
+          : favRaw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
+      if (favs.isEmpty) return filtered;
+      return [...favs, ...filtered];
+    } else if (cat != 'Favorites' && cat != 'Recent') {
+      return _sortWithFavorites(filtered);
+    }
+    return filtered;
   }
 
   Timer? _okTimer;
@@ -206,7 +234,10 @@ class _HomeState extends State<Home> {
   }
 
   void _setChannels(List<Channel> channels) {
-    final map = <String, List<Channel>>{'All': channels};
+    final map = <String, List<Channel>>{
+      'Home': channels,
+      'All': channels,
+    };
     final favs = channels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
     map['Favorites'] = favs;
     final recents = RecentProvider.instance.filterRecent(channels);
@@ -215,13 +246,13 @@ class _HomeState extends State<Home> {
       (map[c.category] ??= []).add(c);
     }
     final cats = [
-      'All',
+      'Home',
       'Favorites',
       'Recent',
       ...categoryOrder.where((c) => c != 'Favorites' && c != 'Recent' && (map[c]?.isNotEmpty ?? false)),
     ];
     final first = categories.isEmpty;
-    final keep = first ? 'All' : categories[selected];
+    final keep = first ? 'Home' : (categories[selected] == 'All' ? 'Home' : categories[selected]);
     setState(() {
       byCategory = map;
       categories = cats;
@@ -251,20 +282,25 @@ class _HomeState extends State<Home> {
     await FavoritesProvider.instance.toggle(channel);
     if (!mounted) return;
 
-    final all = byCategory['All'] ?? [];
+    final all = byCategory['All'] ?? byCategory['Home'] ?? [];
     byCategory['Favorites'] = all.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
     byCategory['Recent'] = RecentProvider.instance.filterRecent(all);
     _grids.clear();
     setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && current.isNotEmpty) {
+        _focusTile(i.clamp(0, current.length - 1));
+      }
+    });
   }
 
   void _openSearchDialog() {
     showDialog(
       context: context,
       builder: (_) => TvSearchDialog(
-        allChannels: byCategory['All'] ?? [],
+        allChannels: byCategory['All'] ?? byCategory['Home'] ?? [],
         onChannelSelect: (ch) {
-          final all = byCategory['All'] ?? [];
+          final all = byCategory['All'] ?? byCategory['Home'] ?? [];
           final idx = all.indexWhere((c) => c.idKey == ch.idKey);
           _playDirect(all, idx >= 0 ? idx : 0);
         },
@@ -396,28 +432,102 @@ class _HomeState extends State<Home> {
 
     final n = current.length;
     int? target;
+    final isHome = _cat == 'Home';
+    final favRaw = byCategory['Favorites'] ?? const <Channel>[];
+    final favCount = isHome
+        ? (selectedLanguage == 'All'
+            ? favRaw.length
+            : favRaw.where((c) => channelMatchesLanguage(c, selectedLanguage)).length)
+        : 0;
+
     if (k == LogicalKeyboardKey.arrowLeft) {
-      if (i % cols == 0) {
-        sideNodes[selected].requestFocus();
-        return KeyEventResult.handled;
-      }
-      target = i - 1;
-    } else if (k == LogicalKeyboardKey.arrowRight) {
-      if (i % cols < cols - 1 && i + 1 < n) target = i + 1;
-    } else if (k == LogicalKeyboardKey.arrowUp) {
-      if (i >= cols) {
-        target = i - cols;
+      if (isHome && favCount > 0) {
+        final col = (i < favCount) ? (i % cols) : ((i - favCount) % cols);
+        if (col == 0) {
+          sideNodes[selected].requestFocus();
+          return KeyEventResult.handled;
+        }
+        target = i - 1;
       } else {
-        final langIdx = indianLanguages.indexOf(selectedLanguage);
-        final focusIdx = langIdx >= 0 ? langIdx : 0;
-        _langNodes[focusIdx].requestFocus();
-        return KeyEventResult.handled;
+        if (i % cols == 0) {
+          sideNodes[selected].requestFocus();
+          return KeyEventResult.handled;
+        }
+        target = i - 1;
+      }
+    } else if (k == LogicalKeyboardKey.arrowRight) {
+      if (isHome && favCount > 0) {
+        if (i < favCount) {
+          if (i % cols < cols - 1 && i + 1 < favCount) target = i + 1;
+        } else {
+          final j = i - favCount;
+          final allLen = n - favCount;
+          if (j % cols < cols - 1 && j + 1 < allLen) target = i + 1;
+        }
+      } else {
+        if (i % cols < cols - 1 && i + 1 < n) target = i + 1;
+      }
+    } else if (k == LogicalKeyboardKey.arrowUp) {
+      if (isHome && favCount > 0) {
+        if (i < favCount) {
+          if (i >= cols) {
+            target = i - cols;
+          } else {
+            final langIdx = indianLanguages.indexOf(selectedLanguage);
+            final focusIdx = langIdx >= 0 ? langIdx : 0;
+            _langNodes[focusIdx].requestFocus();
+            return KeyEventResult.handled;
+          }
+        } else {
+          final j = i - favCount;
+          if (j >= cols) {
+            target = i - cols;
+          } else {
+            // Move up from top row of All Channels into Favorites!
+            final lastFavRow = (favCount - 1) ~/ cols;
+            final lastFavRowStart = lastFavRow * cols;
+            final colInFav = (j % cols).clamp(0, favCount - 1 - lastFavRowStart);
+            target = lastFavRowStart + colInFav;
+          }
+        }
+      } else {
+        if (i >= cols) {
+          target = i - cols;
+        } else {
+          final langIdx = indianLanguages.indexOf(selectedLanguage);
+          final focusIdx = langIdx >= 0 ? langIdx : 0;
+          _langNodes[focusIdx].requestFocus();
+          return KeyEventResult.handled;
+        }
       }
     } else if (k == LogicalKeyboardKey.arrowDown) {
-      if (i + cols < n) {
-        target = i + cols;
-      } else if (i ~/ cols < (n - 1) ~/ cols) {
-        target = n - 1;
+      if (isHome && favCount > 0) {
+        if (i < favCount) {
+          if (i + cols < favCount) {
+            target = i + cols;
+          } else {
+            // Move down from bottom row of Favorites into All Channels!
+            final col = i % cols;
+            final allLen = n - favCount;
+            if (allLen > 0) {
+              target = favCount + col.clamp(0, allLen - 1);
+            }
+          }
+        } else {
+          final j = i - favCount;
+          final allLen = n - favCount;
+          if (j + cols < allLen) {
+            target = i + cols;
+          } else if (j ~/ cols < (allLen - 1) ~/ cols) {
+            target = n - 1;
+          }
+        }
+      } else {
+        if (i + cols < n) {
+          target = i + cols;
+        } else if (i ~/ cols < (n - 1) ~/ cols) {
+          target = n - 1;
+        }
       }
     } else if (k == LogicalKeyboardKey.goBack || k == LogicalKeyboardKey.escape) {
       // Back from the grid returns to the sidebar; Back on the sidebar exits
@@ -435,7 +545,29 @@ class _HomeState extends State<Home> {
     lastTile = i;
     if (grid.hasClients) {
       final pos = grid.position;
-      final top = (i ~/ cols) * rowExtent;
+      double top;
+      final isHome = _cat == 'Home';
+      final favRaw = byCategory['Favorites'] ?? const <Channel>[];
+      final favCount = isHome
+          ? (selectedLanguage == 'All'
+              ? favRaw.length
+              : favRaw.where((c) => channelMatchesLanguage(c, selectedLanguage)).length)
+          : 0;
+
+      if (isHome && favCount > 0) {
+        const headerFavHeight = 36.0;
+        const headerAllHeight = 48.0;
+        if (i < favCount) {
+          top = headerFavHeight + (i ~/ cols) * rowExtent;
+        } else {
+          final j = i - favCount;
+          final favRows = (favCount + cols - 1) ~/ cols;
+          top = headerFavHeight + (favRows * rowExtent) + headerAllHeight + ((j ~/ cols) * rowExtent);
+        }
+      } else {
+        top = (i ~/ cols) * rowExtent;
+      }
+
       const margin = 20.0;
       double? to;
       if (top - margin < pos.pixels) {
@@ -463,7 +595,7 @@ class _HomeState extends State<Home> {
       pageBuilder: (_, __, ___) => Player(
         channels: list,
         index: i,
-        allChannels: byCategory['All'] ?? list,
+        allChannels: byCategory['All'] ?? byCategory['Home'] ?? list,
         initialCategory: categories[selected],
       ),
       transitionDuration: const Duration(milliseconds: 150),
@@ -472,7 +604,7 @@ class _HomeState extends State<Home> {
     ));
     // land on the channel that was playing last & refresh favorites & recents
     if (mounted && list.isNotEmpty) {
-      final all = byCategory['All'] ?? [];
+      final all = byCategory['All'] ?? byCategory['Home'] ?? [];
       byCategory['Favorites'] = all.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
       byCategory['Recent'] = RecentProvider.instance.filterRecent(all);
       _grids.clear();
@@ -803,9 +935,176 @@ class _HomeState extends State<Home> {
     final cardH = cardW * 0.58;
     rowExtent = cardH + 40;
     final raw = byCategory[cat] ?? const <Channel>[];
-    final list = selectedLanguage == 'All'
+    final filtered = selectedLanguage == 'All'
         ? raw
         : raw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
+
+    if (cat == 'Home') {
+      final favRaw = byCategory['Favorites'] ?? const <Channel>[];
+      final favs = selectedLanguage == 'All'
+          ? favRaw
+          : favRaw.where((c) => channelMatchesLanguage(c, selectedLanguage)).toList();
+      final allList = filtered;
+      final controller = _controllers.putIfAbsent(cat, () => ScrollController());
+
+      if (favs.isEmpty) {
+        return CustomScrollView(
+          key: ValueKey('grid/Home/$selectedLanguage/0'),
+          controller: controller,
+          scrollCacheExtent: ScrollCacheExtent.pixels(rowExtent),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(pad, 10, pad, 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.star_outline_rounded, color: Color(0xFFFFD700), size: 18),
+                    const SizedBox(width: 8),
+                    const Text('Tip: Hold OK on any channel to pin it to Favorites at the top',
+                        style: TextStyle(color: Color(0xCCFFFFFF), fontSize: 13, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(pad, 0, pad, 30),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: cols,
+                  mainAxisExtent: rowExtent,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) => _Tile(
+                    key: ValueKey('Home/$selectedLanguage/$i'),
+                    channel: allList[i],
+                    node: tileNodes.putIfAbsent('Home/$selectedLanguage/$i', () => FocusNode()),
+                    cardW: cardW,
+                    cardH: cardH,
+                    onTap: () => _play(i),
+                    onLongPress: () => _toggleFav(i),
+                    onKey: (e) => _tileKey(i, e),
+                  ),
+                  childCount: allList.length,
+                ),
+              ),
+            ),
+          ],
+        );
+      }
+
+      final F = favs.length;
+      return CustomScrollView(
+        key: ValueKey('grid/Home/$selectedLanguage/$F'),
+        controller: controller,
+        scrollCacheExtent: ScrollCacheExtent.pixels(rowExtent),
+        slivers: [
+          // 1. Favorites Header
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(pad, 6, pad, 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.star_rounded, color: Color(0xFFFFD700), size: 20),
+                  const SizedBox(width: 8),
+                  const Text('Favorites',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0x22FFD700),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0x44FFD700), width: 1),
+                    ),
+                    child: Text('$F',
+                        style: const TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // 1. Favorites Grid
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: pad),
+            sliver: SliverGrid(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: cols,
+                mainAxisExtent: rowExtent,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, i) => _Tile(
+                  key: ValueKey('Home/$selectedLanguage/fav_$i'),
+                  channel: favs[i],
+                  node: tileNodes.putIfAbsent('Home/$selectedLanguage/$i', () => FocusNode()),
+                  cardW: cardW,
+                  cardH: cardH,
+                  onTap: () => _play(i),
+                  onLongPress: () => _toggleFav(i),
+                  onKey: (e) => _tileKey(i, e),
+                ),
+                childCount: F,
+              ),
+            ),
+          ),
+
+          // 2. All Channels Header (Niche All)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(pad, 18, pad, 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.tv_rounded, color: Color(0xFF38BDF8), size: 20),
+                  const SizedBox(width: 8),
+                  const Text('All Channels',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0x2238BDF8),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0x4438BDF8), width: 1),
+                    ),
+                    child: Text('${allList.length}',
+                        style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // 2. All Channels Grid
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(pad, 0, pad, 30),
+            sliver: SliverGrid(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: cols,
+                mainAxisExtent: rowExtent,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, j) {
+                  final globalIdx = F + j;
+                  return _Tile(
+                    key: ValueKey('Home/$selectedLanguage/all_$j'),
+                    channel: allList[j],
+                    node: tileNodes.putIfAbsent('Home/$selectedLanguage/$globalIdx', () => FocusNode()),
+                    cardW: cardW,
+                    cardH: cardH,
+                    onTap: () => _play(globalIdx),
+                    onLongPress: () => _toggleFav(globalIdx),
+                    onKey: (e) => _tileKey(globalIdx, e),
+                  );
+                },
+                childCount: allList.length,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final list = (cat == 'Favorites' || cat == 'Recent')
+        ? filtered
+        : _sortWithFavorites(filtered);
 
     if (cat == 'Favorites' && list.isEmpty) {
       return Center(

@@ -47,10 +47,20 @@ class _MiniGuideState extends State<MiniGuide> {
     if (tab == 'Recent') {
       return RecentProvider.instance.filterRecent(widget.allChannels);
     }
-    if (tab == 'All') {
-      return widget.allChannels;
+    if (tab == 'Favorites') {
+      return widget.allChannels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
     }
-    return widget.allChannels.where((c) => c.category == tab).toList();
+    if (tab == 'Recent') {
+      return RecentProvider.instance.filterRecent(widget.allChannels);
+    }
+    if (tab == 'Home' || tab == 'All') {
+      final favs = widget.allChannels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
+      return [...favs, ...widget.allChannels];
+    }
+    final raw = widget.allChannels.where((c) => c.category == tab).toList();
+    final favs = raw.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
+    final nonFavs = raw.where((c) => !FavoritesProvider.instance.isFavorite(c)).toList();
+    return [...favs, ...nonFavs];
   }
 
   List<Channel> get _currentList => _getChannelsForTab(_tabs[_selectedTab]);
@@ -74,7 +84,7 @@ class _MiniGuideState extends State<MiniGuide> {
     _tabs = [
       'Favorites',
       if (recents.isNotEmpty) 'Recent',
-      'All',
+      'Home',
       ...knownOrdered,
       ...remaining,
     ];
@@ -86,8 +96,10 @@ class _MiniGuideState extends State<MiniGuide> {
       _selectedTab = _tabs.indexOf(widget.currentChannel.category);
     } else if (_tabs.contains(widget.initialCategory)) {
       _selectedTab = _tabs.indexOf(widget.initialCategory);
+    } else if (_tabs.contains('Home')) {
+      _selectedTab = _tabs.indexOf('Home');
     } else {
-      _selectedTab = _tabs.indexOf('All');
+      _selectedTab = 0;
     }
 
     _initPosition();
@@ -339,6 +351,13 @@ class _MiniGuideState extends State<MiniGuide> {
                           Icons.history_rounded,
                           size: 14,
                           color: _selectedTab == i ? Colors.blue.shade700 : const Color(0xFF60A5FA),
+                        ),
+                        const SizedBox(width: 4),
+                      ] else if (_tabs[i] == 'Home') ...[
+                        Icon(
+                          Icons.home_rounded,
+                          size: 14,
+                          color: _selectedTab == i ? Colors.black87 : const Color(0xFF38BDF8),
                         ),
                         const SizedBox(width: 4),
                       ],
