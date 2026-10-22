@@ -713,10 +713,12 @@ class _PlayerState extends State<Player> {
       final c = controller;
       final qList = availableQualities;
 
+      final hasMultiAudio = _audioTracks.length > 1;
+
       if (k == LogicalKeyboardKey.arrowUp) {
         if (_controlSection != ControlSection.quality && _controlSection != ControlSection.topBarAudio) {
           setState(() {
-            if (_controlSection == ControlSection.audioTrack || _controlSection == ControlSection.screenFit) {
+            if (hasMultiAudio && (_controlSection == ControlSection.audioTrack || _controlSection == ControlSection.screenFit)) {
               _controlSection = ControlSection.topBarAudio;
             } else {
               _controlSection = ControlSection.quality;
@@ -728,7 +730,7 @@ class _PlayerState extends State<Player> {
 
       if (k == LogicalKeyboardKey.arrowDown) {
         if (_controlSection == ControlSection.topBarAudio) {
-          setState(() => _controlSection = ControlSection.audioTrack);
+          setState(() => _controlSection = hasMultiAudio ? ControlSection.audioTrack : ControlSection.screenFit);
         } else if (_controlSection == ControlSection.quality) {
           setState(() => _controlSection = ControlSection.playPause);
         } else {
@@ -766,7 +768,7 @@ class _PlayerState extends State<Player> {
         if (_controlSection == ControlSection.quality) {
           if (focusedQualityIdx < qList.length - 1) {
             setState(() => focusedQualityIdx++);
-          } else {
+          } else if (hasMultiAudio) {
             setState(() => _controlSection = ControlSection.topBarAudio);
           }
         } else if (_controlSection == ControlSection.topBarAudio) {
@@ -778,7 +780,9 @@ class _PlayerState extends State<Player> {
         } else if (_controlSection == ControlSection.epgGuide) {
           setState(() => _controlSection = ControlSection.screenFit);
         } else if (_controlSection == ControlSection.screenFit) {
-          setState(() => _controlSection = ControlSection.audioTrack);
+          if (hasMultiAudio) {
+            setState(() => _controlSection = ControlSection.audioTrack);
+          }
         }
         return KeyEventResult.handled;
       }
@@ -1296,10 +1300,12 @@ class _PlayerState extends State<Player> {
                         _buildQualityPill(qList[i], i),
                         if (i < qList.length - 1) const SizedBox(width: 8),
                       ],
-                      const SizedBox(width: 14),
-                      Container(width: 1, height: 20, color: Colors.white24),
-                      const SizedBox(width: 14),
-                      _buildTopBarAudioButton(),
+                      if (_audioTracks.length > 1) ...[
+                        const SizedBox(width: 14),
+                        Container(width: 1, height: 20, color: Colors.white24),
+                        const SizedBox(width: 14),
+                        _buildTopBarAudioButton(),
+                      ],
                     ],
                   ),
                 ],
@@ -1349,8 +1355,10 @@ class _PlayerState extends State<Player> {
                     _buildTimelineGuideButton(),
                     const SizedBox(width: 32),
                     _buildScreenFitButton(),
-                    const SizedBox(width: 32),
-                    _buildAudioTrackButton(),
+                    if (_audioTracks.length > 1) ...[
+                      const SizedBox(width: 32),
+                      _buildAudioTrackButton(),
+                    ],
                   ],
                 );
               },
@@ -1947,7 +1955,7 @@ class _PlayerState extends State<Player> {
                         ),
                       ),
                     ),
-                    if (_audioTracks.isNotEmpty) ...[
+                    if (_audioTracks.length > 1) ...[
                       const SizedBox(width: 6),
                       // Multi-Audio Pill
                       Container(
