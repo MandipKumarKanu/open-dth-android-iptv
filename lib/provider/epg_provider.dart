@@ -90,10 +90,9 @@ class EpgProvider extends ChangeNotifier {
       final f = File('$dir/$_cacheFileName');
       if (!await f.exists()) return;
       final modified = await f.lastModified();
-      if (DateTime.now().difference(modified).inHours > 16) {
-        // Cache expired, will refresh
-        return;
-      }
+      // Always load the cache, even if it's older than 16 h: offline users get
+      // yesterday's guide instead of none at all. refresh() — called right after
+      // loadCached by the app — replaces it with fresh data when online.
       final jsonStr = await f.readAsString();
       final map = await compute(_decodeCache, jsonStr);
       if (map.isNotEmpty) {
@@ -159,7 +158,7 @@ Map<String, List<Program>> _parseEpgWorker(List<int> gzipBytes) {
   final chanNameRegex = RegExp(r'<channel id="([^"]+)">\s*<display-name>([^<]+)</display-name>');
   for (final m in chanNameRegex.allMatches(xml)) {
     final id = m.group(1)!;
-    final name = m.group(2)!;
+    final name = _unescapeXml(m.group(2)!);
     chanIdToKey[id] = EpgProvider.nameKey(name);
   }
 
@@ -178,8 +177,8 @@ Map<String, List<Program>> _parseEpgWorker(List<int> gzipBytes) {
     final startStr = m.group(1)!;
     final stopStr = m.group(2)!;
     final chId = m.group(3)!;
-    final title = m.group(4)!.trim();
-    final desc = (m.group(5) ?? '').trim();
+    final title = _unescapeXml(m.group(4)!.trim());
+    final desc = _unescapeXml((m.group(5) ?? '').trim());
 
     final key = chanIdToKey[chId];
     if (key == null) continue;
@@ -206,6 +205,27 @@ Map<String, List<Program>> _parseEpgWorker(List<int> gzipBytes) {
   }
 
   return out;
+}
+
+/// Decodes the five predefined XML entities plus numeric character references
+/// (&#NN; / &#xHH;) that appear in XMLTV titles, descriptions and display
+/// names. `&amp;` is replaced last so `&amp;lt;` decodes correctly.
+String _unescapeXml(String s) {
+  if (!s.contains('&')) return s;
+  var out = s
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&apos;', "'");
+  out = out.replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (m) {
+    final code = int.tryParse(m.group(1)!, radix: 16);
+    return (code != null && code > 0 && code <= 0x10FFFF) ? String.fromCharCode(code) : m.group(0)!;
+  });
+  out = out.replaceAllMapped(RegExp(r'&#(\d+);'), (m) {
+    final code = int.tryParse(m.group(1)!);
+    return (code != null && code > 0 && code <= 0x10FFFF) ? String.fromCharCode(code) : m.group(0)!;
+  });
+  return out.replaceAll('&amp;', '&');
 }
 
 DateTime _parseXmlTime(String s) {

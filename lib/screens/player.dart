@@ -271,14 +271,13 @@ class _PlayerState extends State<Player> {
   Channel? get _previousChannel {
     final prevKey = RecentProvider.instance.getPreviousKey(channel.idKey);
     if (prevKey == null) return null;
-    try {
-      return allChannels.firstWhere(
-        (c) => c.idKey == prevKey,
-        orElse: () => activeChannels.firstWhere((c) => c.idKey == prevKey),
-      );
-    } catch (_) {
-      return null;
+    for (final c in allChannels) {
+      if (c.idKey == prevKey) return c;
     }
+    for (final c in activeChannels) {
+      if (c.idKey == prevKey) return c;
+    }
+    return null;
   }
 
   void _onBufferEvent() {
@@ -1013,6 +1012,7 @@ class _PlayerState extends State<Player> {
                   left: 0,
                   right: 0,
                   bottom: 0,
+                  height: 380,
                   child: TimelineGuide(
                     allChannels: allChannels,
                     currentChannel: channel,

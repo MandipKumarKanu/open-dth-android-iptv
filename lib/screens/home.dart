@@ -708,9 +708,12 @@ class _HomeState extends State<Home> {
       final F = favCount;
 
       if (isHome && (R > 0 || F > 0)) {
-        const headerRecHeight = 44.0;
-        const headerFavHeight = 44.0;
-        const headerAllHeight = 48.0;
+        // Measured against the sliver headers in the Home grid builder: each
+        // header is a 20 px icon/text row plus padding (Recent 6/10, Fav top
+        // 18 with recents above else 6, All 18/10 when a section precedes it).
+        const headerRecHeight = 36.0; // 6 + 20 + 10
+        final headerFavHeight = (R > 0 ? 18.0 : 6.0) + 30.0;
+        const headerAllHeight = 48.0; // 18 + 20 + 10
         final recRows = (R + cols - 1) ~/ cols;
         final favRows = (F + cols - 1) ~/ cols;
 
@@ -728,6 +731,10 @@ class _HomeState extends State<Home> {
                 headerAllHeight +
                 ((local ~/ cols) * rowExtent);
         }
+      } else if (isHome) {
+        // Empty Home: tip banner (10 + 18 + 12) + All header (10 + 20 + 10)
+        // sit above the grid.
+        top = 80.0 + (i ~/ cols) * rowExtent;
       } else {
         top = (i ~/ cols) * rowExtent;
       }

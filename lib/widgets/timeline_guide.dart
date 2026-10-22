@@ -39,10 +39,10 @@ class _TimelineGuideState extends State<TimelineGuide> {
   final FocusNode _focusNode = FocusNode();
   final ScrollController _channelScrollController = ScrollController();
 
-  late List<String> _categories;
-  late int _selectedCategoryIdx;
-  late List<Channel> _activeCategoryChannels;
-  late int _focusedChannelIdx;
+  List<String> _categories = const ['All'];
+  int _selectedCategoryIdx = 0;
+  List<Channel> _activeCategoryChannels = const [];
+  int _focusedChannelIdx = 0;
   int _focusedProgIdx = -1;
   late DateTime _baseTime;
   Timer? _clockTimer;
@@ -96,6 +96,7 @@ class _TimelineGuideState extends State<TimelineGuide> {
         ? widget.currentChannel.category
         : widget.initialCategory;
     _selectedCategoryIdx = _categories.contains(catToFind) ? _categories.indexOf(catToFind) : 0;
+    _focusedChannelIdx = 0;
     _updateChannelsForCategory();
 
     final curIdx = _activeCategoryChannels.indexWhere((c) => c.idKey == widget.currentChannel.idKey);
@@ -302,53 +303,50 @@ class _TimelineGuideState extends State<TimelineGuide> {
       focusNode: _focusNode,
       autofocus: true,
       onKeyEvent: _onKey,
-      child: Align(
-        alignment: Alignment.bottomCenter,
-        child: Container(
-          height: 380,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0xF00A0E17),
-                Color(0xFA05080E),
-                Color(0xFF000000),
-              ],
-            ),
-            border: Border(
-              top: BorderSide(color: Colors.cyan.withValues(alpha: 0.5), width: 1.5),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.8),
-                blurRadius: 20,
-                spreadRadius: 4,
-              ),
+      child: Container(
+        height: 380,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xF00A0E17),
+              Color(0xFA05080E),
+              Color(0xFF000000),
             ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 1. Top Header Bar (Genre Pill, Date, Clock)
-              _buildHeaderBar(activeCat, now),
-
-              // 2. Focused Program Summary (Shows show title & description)
-              if (focusedChannel != null) _buildProgramSummary(focusedChannel, displayedProgram),
-
-              // 3. Timeline Header (Time Slots: 12:00 am, 12:30 am, 01:00 am...)
-              _buildTimelineHeader(),
-
-              // 4. Channel Rows + Timeline Blocks
-              Expanded(
-                child: _buildGridBody(),
-              ),
-
-              // 5. Bottom Remote Help / Action Bar
-              _buildBottomBar(),
-            ],
+          border: Border(
+            top: BorderSide(color: Colors.cyan.withValues(alpha: 0.5), width: 1.5),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.8),
+              blurRadius: 20,
+              spreadRadius: 4,
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 1. Top Header Bar (Genre Pill, Date, Clock)
+            _buildHeaderBar(activeCat, now),
+
+            // 2. Focused Program Summary (Shows show title & description)
+            if (focusedChannel != null) _buildProgramSummary(focusedChannel, displayedProgram),
+
+            // 3. Timeline Header (Time Slots: 12:00 am, 12:30 am, 01:00 am...)
+            _buildTimelineHeader(),
+
+            // 4. Channel Rows + Timeline Blocks
+            Expanded(
+              child: _buildGridBody(),
+            ),
+
+            // 5. Bottom Remote Help / Action Bar
+            _buildBottomBar(),
+          ],
         ),
       ),
     );

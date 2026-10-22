@@ -29,8 +29,13 @@ host any content, and channels can go offline at any time.
 - **Remote-friendly UI:** dark theme, small logo tiles, deterministic D-pad movement (Right into the
   grid, Left from the first column back to the sidebar).
 - **Player:** full screen with a channel banner; Up/Down or Channel +/- changes channel; a stream that
-  errors or doesn't start within 12 seconds falls back to a backup stream; the screen stays awake while
-  playing.
+  errors or doesn't start within 5 seconds falls back to a backup stream, and a network drop
+  mid-playback triggers an automatic reconnect with retries; the screen stays awake while playing.
+- **EPG:** now/next program info on the player's info banner and a DTH-style timeline guide — press OK
+  once to show the info bar, again to open the guide. OK on a program opens a details popup (synopsis,
+  cast) with tune-in and reminder actions; reminders pop an on-screen alert when the program is about
+  to start. Guide data comes from a public XMLTV feed, cached on disk and served even when stale if
+  the TV is offline.
 - **Icons:** light logos go on dark cards and dark logos on light cards; channels without a logo get a
   generated icon (colour from the name plus initials).
 - **App icon and TV banner:** drawn by `../make_live_tv_icons.py`. The manifest uses a real 16:9 banner.

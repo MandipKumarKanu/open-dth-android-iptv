@@ -1,5 +1,5 @@
-name: ip_tv
-description: "A new Flutter project."
+name: live_tv
+description: "Android TV IPTV player for public Indian M3U playlists — DTH-style EPG, remote-first UI, tuned for low-memory TVs."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -19,7 +19,9 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 2.1.0+3
 
 environment:
-  sdk: '>=3.2.1 <4.0.0'
+  # Color.withValues() (used throughout the UI) requires Flutter 3.27+ / Dart 3.6+.
+  sdk: '>=3.6.0 <4.0.0'
+  flutter: '>=3.27.0'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -35,7 +37,11 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.6
-  video_player: ^2.10.1
+  # Pinned exactly on purpose: the audio-track bridge in
+  # android/app/src/main/kotlin/com/example/live_tv/MainActivity.kt reaches
+  # into video_player's private ExoPlayer fields via reflection; upgrading may
+  # silently break track switching.
+  video_player: 2.10.1
   http: ^1.2.0
   path_provider: ^2.1.6
   wakelock_plus: ^1.8.1
