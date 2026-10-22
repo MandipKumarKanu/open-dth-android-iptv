@@ -85,6 +85,13 @@ class _PlayerState extends State<Player> {
     return ['Auto', ...resSet];
   }
 
+  int _streamRetryCount = 0;
+  static const int _maxStreamRetries = 3;
+  Timer? _retryTimer;
+  Timer? _autoRecoveryTimer;
+  bool _isReconnecting = false;
+  int _recoveryAttempts = 0;
+
   @override
   void initState() {
     super.initState();
@@ -113,6 +120,8 @@ class _PlayerState extends State<Player> {
     controlsTimer?.cancel();
     _noticeTimer?.cancel();
     _reminderAlertTimer?.cancel();
+    _retryTimer?.cancel();
+    _autoRecoveryTimer?.cancel();
     if (ReminderProvider.instance.onReminderDue == _showReminderAlert) {
       ReminderProvider.instance.onReminderDue = null;
     }
@@ -139,12 +148,14 @@ class _PlayerState extends State<Player> {
     controller = c;
     startTimer?.cancel();
     startTimer = Timer(_startTimeout, () {
-      if (gen == _generation && !c.value.isInitialized) _nextStream(gen);
+      if (gen == _generation && !c.value.isInitialized) {
+        _handleStreamError(gen);
+      }
     });
     c.addListener(() {
       if (gen != _generation) return;
       if (c.value.hasError) {
-        _nextStream(gen);
+        _handleStreamError(gen);
       } else if (c.value.isBuffering) {
         _onBufferEvent();
       }
@@ -154,6 +165,12 @@ class _PlayerState extends State<Player> {
       if (gen != _generation) return;
       startTimer?.cancel();
       await c.play();
+      _streamRetryCount = 0;
+      _stopAutoRecoveryTimer();
+      if (_isReconnecting) {
+        setState(() => _isReconnecting = false);
+        _showQualityNotice('Connection restored · Stream resumed');
+      }
       RecentProvider.instance.add(channel);
       final currentUrl = channel.streamUrls[streamIdx];
       if (persistWorkingStream) {
@@ -170,14 +187,14 @@ class _PlayerState extends State<Player> {
       _refreshAudioTracks(c, gen);
 
       if (mounted) {
-        if (streamIdx > 0) {
+        if (streamIdx > 0 && !_isReconnecting) {
           final res = streamIdx < channel.streamResolutions.length ? channel.streamResolutions[streamIdx] : 'Backup';
           _showQualityNotice('Connected to backup stream ($res) · Saved as default');
         }
         setState(_flashInfo);
       }
     } catch (_) {
-      if (gen == _generation) _nextStream(gen);
+      if (gen == _generation) _handleStreamError(gen);
     }
   }
 
@@ -265,13 +282,13 @@ class _PlayerState extends State<Player> {
   }
 
   void _onBufferEvent() {
-    if (selectedQuality != 'Auto') return;
+    if (selectedQuality != 'Auto' || _isReconnecting) return;
     final now = DateTime.now();
     _bufferEvents.add(now);
     _bufferEvents.removeWhere((t) => now.difference(t).inSeconds > 15);
 
-    // If buffering persists (>= 2 events in 15 seconds), step down to backup stream
-    if (_bufferEvents.length >= 2 && streamIdx + 1 < channel.streamUrls.length) {
+    // If buffering persists (>= 3 events in 15 seconds), step down to backup stream
+    if (_bufferEvents.length >= 3 && streamIdx + 1 < channel.streamUrls.length) {
       _bufferEvents.clear();
       streamIdx++;
       final newRes = streamIdx < channel.streamResolutions.length
@@ -306,6 +323,9 @@ class _PlayerState extends State<Player> {
 
   void _setQuality(String q) {
     selectedQuality = q;
+    _streamRetryCount = 0;
+    _retryTimer?.cancel();
+    _stopAutoRecoveryTimer();
     if (q == 'Auto') {
       streamIdx = 0;
       _showQualityNotice('Quality: Auto (Network Adaptive)');
@@ -332,9 +352,69 @@ class _PlayerState extends State<Player> {
     if (mounted) setState(() {});
   }
 
+  /// Transient network error handler: performs silent exponential retries on the current stream
+  /// before giving up or falling back to a backup stream.
+  void _handleStreamError(int gen) {
+    if (gen != _generation || !mounted) return;
+    if (_retryTimer?.isActive == true) return;
+    startTimer?.cancel();
+
+    if (_streamRetryCount < _maxStreamRetries) {
+      _streamRetryCount++;
+      setState(() => _isReconnecting = true);
+      final delayMs = _streamRetryCount * 700; // 700ms, 1400ms, 2100ms
+      _showQualityNotice('Signal drop detected · Auto-reconnecting ($_streamRetryCount/$_maxStreamRetries)...');
+      _retryTimer = Timer(Duration(milliseconds: delayMs), () {
+        if (mounted && gen == _generation) {
+          _open(persistWorkingStream: false);
+        }
+      });
+    } else {
+      // 3 retries on this stream failed -> fall back to next backup stream or auto-recovery
+      _nextStream(gen);
+    }
+  }
+
+  /// Automatically polls in the background when a channel fails (e.g. Wi-Fi dropped for 10+ seconds).
+  /// As soon as network connectivity is restored on the TV, playback auto-resumes seamlessly.
+  void _startAutoRecoveryTimer() {
+    _autoRecoveryTimer?.cancel();
+    _recoveryAttempts = 0;
+    _autoRecoveryTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (!failed) {
+        timer.cancel();
+        return;
+      }
+      _recoveryAttempts++;
+      if (_recoveryAttempts > 30) {
+        timer.cancel();
+        if (mounted) setState(() {});
+        return;
+      }
+      if (mounted) setState(() {});
+      final prefIdx = StreamMemoryProvider.instance.getPreferredStreamIndex(channel);
+      streamIdx = prefIdx < channel.streamUrls.length ? prefIdx : 0;
+      _streamRetryCount = 0;
+      _open(persistWorkingStream: false);
+    });
+  }
+
+  void _stopAutoRecoveryTimer() {
+    _autoRecoveryTimer?.cancel();
+    _autoRecoveryTimer = null;
+    _recoveryAttempts = 0;
+  }
+
   /// Current stream failed: report failure and try the channel's next backup.
   void _nextStream(int gen) {
     if (gen != _generation || !mounted) return;
+    _retryTimer?.cancel();
+    _streamRetryCount = 0;
+
     final failedUrl = (streamIdx < channel.streamUrls.length) ? channel.streamUrls[streamIdx] : '';
     if (failedUrl.isNotEmpty) {
       StreamMemoryProvider.instance.reportStreamFailure(channel, failedUrl);
@@ -352,12 +432,18 @@ class _PlayerState extends State<Player> {
       setState(() {
         failed = true;
         showInfo = true;
+        _isReconnecting = false;
       });
       infoTimer?.cancel();
+      _startAutoRecoveryTimer();
     }
   }
 
   void _zap(int delta) {
+    _retryTimer?.cancel();
+    _stopAutoRecoveryTimer();
+    _streamRetryCount = 0;
+    _isReconnecting = false;
     final n = activeChannels.length;
     setState(() {
       index = (index + delta) % n;
@@ -490,6 +576,10 @@ class _PlayerState extends State<Player> {
   }
 
   void _tuneToChannel(Channel newChannel) {
+    _retryTimer?.cancel();
+    _stopAutoRecoveryTimer();
+    _streamRetryCount = 0;
+    _isReconnecting = false;
     if (newChannel.idKey == channel.idKey) {
       // Channel is already playing! Just close overlay without reloading
       if (showTimelineGuide) _closeTimelineGuide();
@@ -666,12 +756,7 @@ class _PlayerState extends State<Player> {
       return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.arrowLeft) {
       // Left key exclusively opens the channel guide
-      if (failed) {
-        streamIdx = 0;
-        _open();
-      } else {
-        _openGuide();
-      }
+      _openGuide();
       return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.escape ||
         k == LogicalKeyboardKey.goBack ||
@@ -696,6 +781,14 @@ class _PlayerState extends State<Player> {
       }
       return KeyEventResult.ignored;
     } else if (isSelectKey(k)) {
+      if (failed) {
+        _stopAutoRecoveryTimer();
+        streamIdx = 0;
+        _streamRetryCount = 0;
+        _showQualityNotice('Retrying connection...');
+        _open();
+        return KeyEventResult.handled;
+      }
       if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350) ||
           DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 350)) {
         return KeyEventResult.handled;
@@ -775,36 +868,114 @@ class _PlayerState extends State<Player> {
               if (!failed)
                 ValueListenableBuilder<VideoPlayerValue>(
                   valueListenable: c ?? ValueNotifier(const VideoPlayerValue.uninitialized()),
-                  builder: (_, v, __) => (!v.isInitialized || v.isBuffering)
-                      ? const Center(
-                          child: SizedBox(
-                              width: 34,
-                              height: 34,
-                              child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white70)))
-                      : const SizedBox.shrink(),
+                  builder: (_, v, __) {
+                    final isBufferingOrInit = !v.isInitialized || v.isBuffering;
+                    if (isBufferingOrInit || _isReconnecting) {
+                      return Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.72),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.5),
+                                blurRadius: 16,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: _isReconnecting ? const Color(0xFF64B5F6) : Colors.white70,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                _isReconnecting
+                                    ? 'Reconnecting stream ($_streamRetryCount/$_maxStreamRetries)...'
+                                    : 'Buffering stream...',
+                                style: TextStyle(
+                                  color: _isReconnecting ? const Color(0xFF90CAF9) : Colors.white.withValues(alpha: 0.9),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
                 ),
               if (failed && !showControls)
                 Center(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.signal_wifi_bad_rounded, color: Colors.white54, size: 40),
-                    const SizedBox(height: 12),
-                    const Text('This channel isn’t available right now',
-                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('OK: Timeline Guide  ·  Menu: Controls  ·  ',
-                            style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
-                        Icon(Icons.unfold_more_rounded, size: 14, color: Colors.white.withValues(alpha: 0.6)),
-                        const SizedBox(width: 2),
-                        Text('Zap  ·  ', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
-                        Icon(Icons.arrow_back_rounded, size: 13, color: Colors.white.withValues(alpha: 0.6)),
-                        const SizedBox(width: 2),
-                        Text('Channels', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.82),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.6),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
+                        ),
                       ],
                     ),
-                  ]),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.signal_wifi_bad_rounded, color: Color(0xFFEF5350), size: 44),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'This channel isn’t available right now',
+                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_autoRecoveryTimer?.isActive == true && _recoveryAttempts <= 30) ...[
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF64B5F6)),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Auto-reconnecting in background (Attempt $_recoveryAttempts)...',
+                              style: const TextStyle(color: Color(0xFF90CAF9), fontSize: 13, fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('OK: Retry Now  ·  ',
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13, fontWeight: FontWeight.w600)),
+                          Text('Menu: Controls  ·  ',
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                          Icon(Icons.unfold_more_rounded, size: 14, color: Colors.white.withValues(alpha: 0.6)),
+                          const SizedBox(width: 2),
+                          Text('Zap  ·  ', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                          Icon(Icons.arrow_back_rounded, size: 13, color: Colors.white.withValues(alpha: 0.6)),
+                          const SizedBox(width: 2),
+                          Text('Channels', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                        ],
+                      ),
+                    ]),
+                  ),
                 ),
 
               // Simple bottom info bar when controls and guide are hidden
