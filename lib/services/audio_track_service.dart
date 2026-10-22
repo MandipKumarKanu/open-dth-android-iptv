@@ -209,4 +209,23 @@ class AudioTrackService {
       return [];
     }
   }
+
+  /// Configures live buffer window (e.g. 15-20 seconds behind live edge)
+  /// and locks playback speed to 1.0x so ExoPlayer builds a solid buffer in RAM.
+  static Future<Map<String, dynamic>?> enableLiveBufferWindow({
+    int? playerId,
+    int offsetMs = 18000,
+  }) async {
+    try {
+      final res = await _channel.invokeMethod('enableLiveBufferWindow', {
+        if (playerId != null) 'playerId': playerId,
+        'offsetMs': offsetMs,
+      });
+      if (res is Map) {
+        return Map<String, dynamic>.from(res);
+      }
+    } catch (_) {}
+    return null;
+  }
 }
+

@@ -63,7 +63,7 @@ class _PlayerState extends State<Player> {
   String? qualityNotice;
   List<AudioTrack> _audioTracks = [];
   AudioTrack? _selectedAudioTrack;
-  Timer? _noticeTimer, controlsTimer, infoTimer, startTimer, zapTimer, guideTimer, timelineGuideTimer;
+  Timer? _noticeTimer, controlsTimer, infoTimer, startTimer, zapTimer, guideTimer, timelineGuideTimer, _bufferingStepDownTimer;
   final List<DateTime> _bufferEvents = [];
 
   int _generation = 0;
@@ -123,6 +123,7 @@ class _PlayerState extends State<Player> {
     _reminderAlertTimer?.cancel();
     _retryTimer?.cancel();
     _autoRecoveryTimer?.cancel();
+    _bufferingStepDownTimer?.cancel();
     if (ReminderProvider.instance.onReminderDue == _showReminderAlert) {
       ReminderProvider.instance.onReminderDue = null;
     }
@@ -145,7 +146,15 @@ class _PlayerState extends State<Player> {
     old?.dispose();
 
     if (streamIdx >= channel.streamUrls.length) streamIdx = 0;
-    final c = VideoPlayerController.networkUrl(Uri.parse(channel.streamUrls[streamIdx]));
+    final c = VideoPlayerController.networkUrl(
+      Uri.parse(channel.streamUrls[streamIdx]),
+      httpHeaders: const {
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Connection': 'keep-alive',
+      },
+    );
     controller = c;
     startTimer?.cancel();
     startTimer = Timer(_startTimeout, () {
@@ -186,6 +195,14 @@ class _PlayerState extends State<Player> {
         );
       }
       _refreshAudioTracks(c, gen);
+
+      // Establish ~18-second live buffer window behind live edge so ExoPlayer holds
+      // multiple media chunks in memory, preventing buffering on transient network jitter.
+      Future.delayed(const Duration(milliseconds: 1400), () {
+        if (mounted && gen == _generation && controller == c) {
+          AudioTrackService.enableLiveBufferWindow(offsetMs: 18000);
+        }
+      });
 
       if (mounted) {
         if (streamIdx > 0 && !_isReconnecting) {
@@ -287,16 +304,29 @@ class _PlayerState extends State<Player> {
     _bufferEvents.add(now);
     _bufferEvents.removeWhere((t) => now.difference(t).inSeconds > 15);
 
-    // If buffering persists (>= 3 events in 15 seconds), step down to backup stream
-    if (_bufferEvents.length >= 3 && streamIdx + 1 < channel.streamUrls.length) {
-      _bufferEvents.clear();
+    // If stream stays buffering for > 3.5s continuously, step down to backup stream
+    _bufferingStepDownTimer?.cancel();
+    _bufferingStepDownTimer = Timer(const Duration(milliseconds: 3500), () {
+      if (mounted && controller?.value.isBuffering == true) {
+        _stepDownToBackupStream();
+      }
+    });
+
+    // If buffering occurs 2 times within 15 seconds, step down to backup stream
+    if (_bufferEvents.length >= 2) {
+      _stepDownToBackupStream();
+    }
+  }
+
+  void _stepDownToBackupStream() {
+    _bufferingStepDownTimer?.cancel();
+    _bufferEvents.clear();
+    if (streamIdx + 1 < channel.streamUrls.length) {
       streamIdx++;
       final newRes = streamIdx < channel.streamResolutions.length
           ? channel.streamResolutions[streamIdx]
-          : 'lower stream';
+          : 'backup stream';
       _showQualityNotice('Network slow · Auto-switched to $newRes');
-      // Don't persist the auto-downgrade: a transient blip shouldn't pin this
-      // channel to a lower-quality stream across launches.
       _open(persistWorkingStream: false);
     }
   }

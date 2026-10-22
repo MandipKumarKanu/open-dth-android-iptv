@@ -146,6 +146,38 @@ class MainActivity: FlutterActivity() {
                         result.error("RESET_ERROR", "Failed to reset audio track: ${e.message}", null)
                     }
                 }
+                "enableLiveBufferWindow" -> {
+                    if (exoPlayer == null) {
+                        result.error("NOT_FOUND", "ExoPlayer not found", null)
+                        return@setMethodCallHandler
+                    }
+                    val bufferOffsetMs = (call.argument<Number>("offsetMs"))?.toLong() ?: 18000L
+                    try {
+                        // Lock playback speed to 1.0f so ExoPlayer never speeds up to live edge and depletes buffer
+                        exoPlayer.playbackParameters = androidx.media3.common.PlaybackParameters(1.0f)
+
+                        val currentPos = exoPlayer.currentPosition
+                        val liveOffset = exoPlayer.currentLiveOffset
+
+                        var shifted = false
+                        // If live stream has enough time window, seek back bufferOffsetMs to establish safety buffer
+                        if (currentPos > bufferOffsetMs + 4000L) {
+                            exoPlayer.seekTo(currentPos - bufferOffsetMs)
+                            shifted = true
+                        }
+
+                        val info = hashMapOf<String, Any?>(
+                            "isLive" to exoPlayer.isCurrentMediaItemLive,
+                            "currentPos" to currentPos,
+                            "liveOffset" to liveOffset,
+                            "totalBuffered" to exoPlayer.totalBufferedDuration,
+                            "shifted" to shifted
+                        )
+                        result.success(info)
+                    } catch (e: Exception) {
+                        result.error("BUFFER_CONFIG_ERROR", "Failed to configure live buffer: ${e.message}", null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
