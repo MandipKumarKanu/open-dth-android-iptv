@@ -71,6 +71,7 @@ class _PlayerState extends State<Player> {
   DateTime _lastGuideClose = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastTimelineGuideClose = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastControlsClose = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastInfoClose = DateTime.fromMillisecondsSinceEpoch(0);
 
   Channel get channel => activeChannels[index];
 
@@ -472,6 +473,19 @@ class _PlayerState extends State<Player> {
     });
   }
 
+  void _closeInfo() {
+    _lastInfoClose = DateTime.now();
+    infoTimer?.cancel();
+    if (mounted) {
+      setState(() => showInfo = false);
+    }
+  }
+
+  bool _isBackKey(LogicalKeyboardKey k) =>
+      k == LogicalKeyboardKey.escape ||
+      k == LogicalKeyboardKey.goBack ||
+      k == LogicalKeyboardKey.browserBack;
+
   void _openTimelineGuide() {
     setState(() {
       showTimelineGuide = true;
@@ -602,8 +616,18 @@ class _PlayerState extends State<Player> {
   }
 
   KeyEventResult _onKey(FocusNode _, KeyEvent e) {
-    if (e is KeyUpEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
+    if (e is KeyUpEvent) {
+      if (_isBackKey(k)) {
+        if (DateTime.now().difference(_lastInfoClose) < const Duration(milliseconds: 450) ||
+            DateTime.now().difference(_lastControlsClose) < const Duration(milliseconds: 450) ||
+            DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 450) ||
+            DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 450)) {
+          return KeyEventResult.handled;
+        }
+      }
+      return KeyEventResult.ignored;
+    }
 
     // Active reminder alert interception (OK to tune, Back to dismiss)
     if (_activeReminderAlert != null) {
@@ -623,9 +647,7 @@ class _PlayerState extends State<Player> {
         } catch (_) {}
         return KeyEventResult.handled;
       }
-      if (k == LogicalKeyboardKey.escape ||
-          k == LogicalKeyboardKey.goBack ||
-          k == LogicalKeyboardKey.browserBack) {
+      if (_isBackKey(k)) {
         _reminderAlertTimer?.cancel();
         setState(() => _activeReminderAlert = null);
         return KeyEventResult.handled;
@@ -757,9 +779,13 @@ class _PlayerState extends State<Player> {
       // Left key exclusively opens the channel guide
       _openGuide();
       return KeyEventResult.handled;
-    } else if (k == LogicalKeyboardKey.escape ||
-        k == LogicalKeyboardKey.goBack ||
-        k == LogicalKeyboardKey.browserBack) {
+    } else if (_isBackKey(k)) {
+      if (DateTime.now().difference(_lastInfoClose) < const Duration(milliseconds: 450) ||
+          DateTime.now().difference(_lastControlsClose) < const Duration(milliseconds: 450) ||
+          DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 450) ||
+          DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 450)) {
+        return KeyEventResult.handled;
+      }
       if (showTimelineGuide) {
         _closeTimelineGuide();
         return KeyEventResult.handled;
@@ -774,8 +800,7 @@ class _PlayerState extends State<Player> {
         return KeyEventResult.handled;
       }
       if (showInfo && !failed) {
-        infoTimer?.cancel();
-        setState(() => showInfo = false);
+        _closeInfo();
         return KeyEventResult.handled;
       }
       return KeyEventResult.ignored;
@@ -789,7 +814,9 @@ class _PlayerState extends State<Player> {
         return KeyEventResult.handled;
       }
       if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350) ||
-          DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 350)) {
+          DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 350) ||
+          DateTime.now().difference(_lastControlsClose) < const Duration(milliseconds: 350) ||
+          DateTime.now().difference(_lastInfoClose) < const Duration(milliseconds: 350)) {
         return KeyEventResult.handled;
       }
       if (!showInfo) {
@@ -816,6 +843,11 @@ class _PlayerState extends State<Player> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        if (_activeReminderAlert != null) {
+          _reminderAlertTimer?.cancel();
+          setState(() => _activeReminderAlert = null);
+          return;
+        }
         if (showTimelineGuide) {
           _closeTimelineGuide();
           return;
@@ -825,21 +857,23 @@ class _PlayerState extends State<Player> {
           setState(() => showControls = false);
           return;
         }
-        if (DateTime.now().difference(_lastControlsClose) < const Duration(milliseconds: 350)) {
+        if (DateTime.now().difference(_lastControlsClose) < const Duration(milliseconds: 450)) {
           return;
         }
         if (showGuide) {
           _closeGuide();
           return;
         }
-        if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 350) ||
-            DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 350)) {
+        if (DateTime.now().difference(_lastGuideClose) < const Duration(milliseconds: 450) ||
+            DateTime.now().difference(_lastTimelineGuideClose) < const Duration(milliseconds: 450)) {
           return;
         }
         // If bottom Info Bar is visible, dismiss it first! Do NOT exit the channel!
         if (showInfo && !failed) {
-          infoTimer?.cancel();
-          setState(() => showInfo = false);
+          _closeInfo();
+          return;
+        }
+        if (DateTime.now().difference(_lastInfoClose) < const Duration(milliseconds: 450)) {
           return;
         }
         Navigator.of(context).pop(index);
