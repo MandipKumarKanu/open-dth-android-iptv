@@ -55,13 +55,16 @@ class _MiniGuideState extends State<MiniGuide> {
     } else if (tab == 'Recent') {
       list = RecentProvider.instance.filterRecent(widget.allChannels);
     } else if (tab == 'Home' || tab == 'All') {
+      final recents = RecentProvider.instance.filterRecent(widget.allChannels);
       final favs = widget.allChannels.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
-      list = [...favs, ...widget.allChannels];
+      list = [...recents, ...favs, ...widget.allChannels];
     } else {
+      final allRecent = RecentProvider.instance.filterRecent(widget.allChannels);
+      final recents = allRecent.where((c) => c.category == tab).toList();
       final raw = widget.allChannels.where((c) => c.category == tab).toList();
       final favs = raw.where((c) => FavoritesProvider.instance.isFavorite(c)).toList();
       final nonFavs = raw.where((c) => !FavoritesProvider.instance.isFavorite(c)).toList();
-      list = [...favs, ...nonFavs];
+      list = [...recents, ...favs, ...nonFavs];
     }
     _tabChannelLists[tab] = list;
     return list;

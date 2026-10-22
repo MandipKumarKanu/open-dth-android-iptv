@@ -20,7 +20,7 @@ import '../widgets/tv_audio_track_dialog.dart';
 import '../widgets/tv_search_dialog.dart';
 import 'home.dart' show isSelectKey;
 
-enum ControlSection { playPause, recall, quality, screenFit, audioTrack, epgGuide }
+enum ControlSection { playPause, recall, quality, screenFit, audioTrack, topBarAudio, epgGuide }
 
 /// Full-screen live player.
 /// ◀ (Left) opens Mini-Guide, OK toggles DTH Timeline Guide,
@@ -264,8 +264,27 @@ class _PlayerState extends State<Player> {
     }
   }
 
-  void _openAudioTrackDialog() {
-    if (_audioTracks.isEmpty) return;
+  Future<void> _openAudioTrackDialog() async {
+    final c = controller;
+    if (_audioTracks.isEmpty && c != null && c.value.isInitialized) {
+      try {
+        final tracks = await AudioTrackService.getAudioTracks();
+        if (mounted && tracks.isNotEmpty) {
+          setState(() {
+            _audioTracks = tracks;
+            _selectedAudioTrack = tracks.where((t) => t.isSelected).firstOrNull ?? tracks.first;
+          });
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+
+    if (_audioTracks.isEmpty) {
+      _showQualityNotice('Single Audio Track (Stereo) active');
+      return;
+    }
+
     showDialog(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.65),
@@ -548,6 +567,10 @@ class _PlayerState extends State<Player> {
   }
 
   void _openControls() {
+    final c = controller;
+    if (c != null && c.value.isInitialized) {
+      _refreshAudioTracks(c, _generation);
+    }
     setState(() {
       showControls = true;
       showInfo = false;
@@ -691,12 +714,22 @@ class _PlayerState extends State<Player> {
       final qList = availableQualities;
 
       if (k == LogicalKeyboardKey.arrowUp) {
-        setState(() => _controlSection = ControlSection.quality);
+        if (_controlSection != ControlSection.quality && _controlSection != ControlSection.topBarAudio) {
+          setState(() {
+            if (_controlSection == ControlSection.audioTrack || _controlSection == ControlSection.screenFit) {
+              _controlSection = ControlSection.topBarAudio;
+            } else {
+              _controlSection = ControlSection.quality;
+            }
+          });
+        }
         return KeyEventResult.handled;
       }
 
       if (k == LogicalKeyboardKey.arrowDown) {
-        if (_controlSection == ControlSection.quality) {
+        if (_controlSection == ControlSection.topBarAudio) {
+          setState(() => _controlSection = ControlSection.audioTrack);
+        } else if (_controlSection == ControlSection.quality) {
           setState(() => _controlSection = ControlSection.playPause);
         } else {
           setState(() => showControls = false);
@@ -705,7 +738,12 @@ class _PlayerState extends State<Player> {
       }
 
       if (k == LogicalKeyboardKey.arrowLeft) {
-        if (_controlSection == ControlSection.quality) {
+        if (_controlSection == ControlSection.topBarAudio) {
+          setState(() {
+            _controlSection = ControlSection.quality;
+            focusedQualityIdx = qList.isNotEmpty ? qList.length - 1 : 0;
+          });
+        } else if (_controlSection == ControlSection.quality) {
           if (focusedQualityIdx > 0) {
             setState(() => focusedQualityIdx--);
           }
@@ -728,14 +766,18 @@ class _PlayerState extends State<Player> {
         if (_controlSection == ControlSection.quality) {
           if (focusedQualityIdx < qList.length - 1) {
             setState(() => focusedQualityIdx++);
+          } else {
+            setState(() => _controlSection = ControlSection.topBarAudio);
           }
+        } else if (_controlSection == ControlSection.topBarAudio) {
+          // Rightmost in top bar
         } else if (_controlSection == ControlSection.recall) {
           setState(() => _controlSection = ControlSection.playPause);
         } else if (_controlSection == ControlSection.playPause) {
           setState(() => _controlSection = ControlSection.epgGuide);
         } else if (_controlSection == ControlSection.epgGuide) {
           setState(() => _controlSection = ControlSection.screenFit);
-        } else if (_controlSection == ControlSection.screenFit && _audioTracks.isNotEmpty) {
+        } else if (_controlSection == ControlSection.screenFit) {
           setState(() => _controlSection = ControlSection.audioTrack);
         }
         return KeyEventResult.handled;
@@ -763,7 +805,7 @@ class _PlayerState extends State<Player> {
           _openTimelineGuide();
         } else if (_controlSection == ControlSection.screenFit) {
           _toggleScreenFit();
-        } else if (_controlSection == ControlSection.audioTrack) {
+        } else if (_controlSection == ControlSection.audioTrack || _controlSection == ControlSection.topBarAudio) {
           _openAudioTrackDialog();
         } else if (_controlSection == ControlSection.quality) {
           if (focusedQualityIdx >= 0 && focusedQualityIdx < qList.length) {
@@ -1241,7 +1283,7 @@ class _PlayerState extends State<Player> {
                   Text(channel.name,
                       style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                   const Spacer(),
-                  // Quality Selector Pills
+                  // Quality Selector Pills & Audio Changer
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -1254,6 +1296,10 @@ class _PlayerState extends State<Player> {
                         _buildQualityPill(qList[i], i),
                         if (i < qList.length - 1) const SizedBox(width: 8),
                       ],
+                      const SizedBox(width: 14),
+                      Container(width: 1, height: 20, color: Colors.white24),
+                      const SizedBox(width: 14),
+                      _buildTopBarAudioButton(),
                     ],
                   ),
                 ],
@@ -1303,10 +1349,8 @@ class _PlayerState extends State<Player> {
                     _buildTimelineGuideButton(),
                     const SizedBox(width: 32),
                     _buildScreenFitButton(),
-                    if (_audioTracks.isNotEmpty) ...[
-                      const SizedBox(width: 32),
-                      _buildAudioTrackButton(),
-                    ],
+                    const SizedBox(width: 32),
+                    _buildAudioTrackButton(),
                   ],
                 );
               },
@@ -1588,7 +1632,9 @@ class _PlayerState extends State<Player> {
   Widget _buildAudioTrackButton() {
     final isFocused = _controlSection == ControlSection.audioTrack;
     final currentTrack = _selectedAudioTrack;
-    final label = currentTrack != null ? currentTrack.displayName : 'Audio';
+    final label = currentTrack != null
+        ? currentTrack.displayName
+        : (_audioTracks.isNotEmpty ? _audioTracks.first.displayName : 'Stereo');
 
     return GestureDetector(
       onTap: () {
@@ -1642,6 +1688,70 @@ class _PlayerState extends State<Player> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTopBarAudioButton() {
+    final isFocused = _controlSection == ControlSection.topBarAudio;
+    final currentTrack = _selectedAudioTrack;
+    final label = currentTrack != null
+        ? currentTrack.displayName
+        : (_audioTracks.isNotEmpty ? _audioTracks.first.displayName : 'Stereo');
+    final hasMultiple = _audioTracks.length > 1;
+
+    return GestureDetector(
+      onTap: () {
+        _openAudioTrackDialog();
+        _resetControlsTimer();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          color: isFocused
+              ? const Color(0xFFF59E0B)
+              : const Color(0xFF1E293B).withValues(alpha: 0.8),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isFocused ? Colors.white : const Color(0xFFF59E0B).withValues(alpha: 0.6),
+            width: isFocused ? 2 : 1,
+          ),
+          boxShadow: isFocused
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.8),
+                    blurRadius: 14,
+                    spreadRadius: 1,
+                  )
+                ]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.audiotrack_rounded,
+              size: 15,
+              color: isFocused ? Colors.black : const Color(0xFFF59E0B),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Audio: $label${hasMultiple ? " (${_audioTracks.length})" : ""}',
+              style: TextStyle(
+                color: isFocused ? Colors.black : Colors.white,
+                fontSize: 12.5,
+                fontWeight: isFocused ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              Icons.arrow_drop_down_rounded,
+              size: 18,
+              color: isFocused ? Colors.black : const Color(0xFFF59E0B),
+            ),
+          ],
+        ),
       ),
     );
   }

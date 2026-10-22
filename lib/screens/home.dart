@@ -191,7 +191,7 @@ class _HomeState extends State<Home> {
 
     // 1. Category-specific recents (up to 2 rows = cols * 2 = 12 channels)
     final allRecent = byCategory['Recent'] ?? const <Channel>[];
-    final recRaw = cat == 'Home'
+    final recRaw = (cat == 'Home' || cat == 'All')
         ? allRecent
         : allRecent.where((c) => c.category == cat).toList();
     final recFiltered = selectedLanguage == 'All'
@@ -202,7 +202,7 @@ class _HomeState extends State<Home> {
 
     // 2. Category-specific favorites
     final allFav = byCategory['Favorites'] ?? const <Channel>[];
-    final favRaw = cat == 'Home'
+    final favRaw = (cat == 'Home' || cat == 'All')
         ? allFav
         : allFav.where((c) => c.category == cat).toList();
     final favFiltered = selectedLanguage == 'All'
@@ -396,6 +396,7 @@ class _HomeState extends State<Home> {
 
   void _selectCategory(int i) {
     if (i == selected) return;
+    lastTile = 0;
     final oldCat = _cat;
     if (_hasFavChangesWhileInCat) {
       _dirtyCategories.add(oldCat);
@@ -790,7 +791,19 @@ class _HomeState extends State<Home> {
       _invalidateAllGrids();
       setState(() {});
       if (current.isNotEmpty) {
-        _focusTile((result ?? i).clamp(0, current.length - 1));
+        final lastIdx = result ?? i;
+        Channel? lastPlayed;
+        if (lastIdx >= 0 && lastIdx < list.length) {
+          lastPlayed = list[lastIdx];
+        } else if (RecentProvider.instance.ids.isNotEmpty) {
+          final firstKey = RecentProvider.instance.ids.first;
+          lastPlayed = all.where((c) => c.idKey == firstKey).firstOrNull ?? current.first;
+        }
+        int targetIdx = -1;
+        if (lastPlayed != null) {
+          targetIdx = current.indexWhere((c) => c.idKey == lastPlayed!.idKey);
+        }
+        _focusTile((targetIdx >= 0 ? targetIdx : lastIdx).clamp(0, current.length - 1));
       }
     }
   }
@@ -814,7 +827,19 @@ class _HomeState extends State<Home> {
       _invalidateAllGrids();
       setState(() {});
       if (current.isNotEmpty) {
-        _focusTile((result ?? i).clamp(0, current.length - 1));
+        final lastIdx = result ?? i;
+        Channel? lastPlayed;
+        if (lastIdx >= 0 && lastIdx < list.length) {
+          lastPlayed = list[lastIdx];
+        } else if (RecentProvider.instance.ids.isNotEmpty) {
+          final firstKey = RecentProvider.instance.ids.first;
+          lastPlayed = all.where((c) => c.idKey == firstKey).firstOrNull ?? current.first;
+        }
+        int targetIdx = -1;
+        if (lastPlayed != null) {
+          targetIdx = current.indexWhere((c) => c.idKey == lastPlayed!.idKey);
+        }
+        _focusTile((targetIdx >= 0 ? targetIdx : lastIdx).clamp(0, current.length - 1));
       }
     }
   }
