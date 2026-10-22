@@ -9,6 +9,7 @@ import '../model/program.dart';
 import '../provider/epg_provider.dart';
 import '../screens/home.dart' show isSelectKey;
 import 'channel_icon.dart';
+import 'tv_category_dialog.dart';
 import 'tv_program_details_dialog.dart';
 
 /// Full-featured DTH Electronic Program Guide (EPG) Timeline Overlay
@@ -44,6 +45,7 @@ class _TimelineGuideState extends State<TimelineGuide> {
   List<Channel> _activeCategoryChannels = const [];
   int _focusedChannelIdx = 0;
   int _focusedProgIdx = -1;
+  bool _isCategoryFocused = false;
   late DateTime _baseTime;
   Timer? _clockTimer;
 
@@ -134,7 +136,17 @@ class _TimelineGuideState extends State<TimelineGuide> {
     _focusedProgIdx = liveIdx >= 0 ? liveIdx : 0;
   }
 
-  void _cycleCategory() {
+  void _prevCategory() {
+    setState(() {
+      _selectedCategoryIdx = (_selectedCategoryIdx - 1 + _categories.length) % _categories.length;
+      _updateChannelsForCategory();
+      _focusedChannelIdx = 0;
+      _syncFocusedProgramForChannel();
+    });
+    _scrollToFocusedChannel();
+  }
+
+  void _nextCategory() {
     setState(() {
       _selectedCategoryIdx = (_selectedCategoryIdx + 1) % _categories.length;
       _updateChannelsForCategory();
@@ -142,6 +154,42 @@ class _TimelineGuideState extends State<TimelineGuide> {
       _syncFocusedProgramForChannel();
     });
     _scrollToFocusedChannel();
+  }
+
+  Map<String, int> _getCategoryCounts() {
+    final map = <String, int>{'All': widget.allChannels.length};
+    for (final c in widget.allChannels) {
+      if (c.category.isNotEmpty) {
+        map[c.category] = (map[c.category] ?? 0) + 1;
+      }
+    }
+    return map;
+  }
+
+  void _openCategoryDialog() {
+    TvCategoryPickerDialog.show(
+      context: context,
+      categories: _categories,
+      categoryCounts: _getCategoryCounts(),
+      selectedCategory: _categories[_selectedCategoryIdx],
+      onCategorySelected: (cat) {
+        final idx = _categories.indexOf(cat);
+        if (idx >= 0 && idx != _selectedCategoryIdx) {
+          setState(() {
+            _selectedCategoryIdx = idx;
+            _isCategoryFocused = false;
+            _updateChannelsForCategory();
+            _focusedChannelIdx = 0;
+            _syncFocusedProgramForChannel();
+          });
+          _scrollToFocusedChannel();
+        } else {
+          setState(() => _isCategoryFocused = false);
+        }
+      },
+    ).then((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   void _scrollToFocusedChannel() {
@@ -159,6 +207,65 @@ class _TimelineGuideState extends State<TimelineGuide> {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
 
+    // Fast Page / Channel jump (5 channels at once)
+    if (k == LogicalKeyboardKey.pageUp || k == LogicalKeyboardKey.channelUp) {
+      if (_focusedChannelIdx > 0) {
+        setState(() {
+          _focusedChannelIdx = max(0, _focusedChannelIdx - 5);
+          _syncFocusedProgramForChannel();
+        });
+        _scrollToFocusedChannel();
+      }
+      return KeyEventResult.handled;
+    }
+
+    if (k == LogicalKeyboardKey.pageDown || k == LogicalKeyboardKey.channelDown) {
+      if (_focusedChannelIdx < _activeCategoryChannels.length - 1) {
+        setState(() {
+          _focusedChannelIdx = min(_activeCategoryChannels.length - 1, _focusedChannelIdx + 5);
+          _syncFocusedProgramForChannel();
+        });
+        _scrollToFocusedChannel();
+      }
+      return KeyEventResult.handled;
+    }
+
+    // Direct Category Selection Modal via Menu, F2, or C key
+    if (k == LogicalKeyboardKey.contextMenu ||
+        k == LogicalKeyboardKey.f2 ||
+        k == LogicalKeyboardKey.keyC) {
+      _openCategoryDialog();
+      return KeyEventResult.handled;
+    }
+
+    // When Header Category Pill is focused
+    if (_isCategoryFocused) {
+      if (k == LogicalKeyboardKey.arrowDown) {
+        // Return focus down to the channel list
+        setState(() => _isCategoryFocused = false);
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.arrowLeft) {
+        _prevCategory();
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.arrowRight) {
+        _nextCategory();
+        return KeyEventResult.handled;
+      }
+      if (isSelectKey(k)) {
+        _openCategoryDialog();
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.escape ||
+          k == LogicalKeyboardKey.goBack ||
+          k == LogicalKeyboardKey.browserBack) {
+        setState(() => _isCategoryFocused = false);
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
+
     final ch = (_activeCategoryChannels.isNotEmpty && _focusedChannelIdx < _activeCategoryChannels.length)
         ? _activeCategoryChannels[_focusedChannelIdx]
         : null;
@@ -175,6 +282,9 @@ class _TimelineGuideState extends State<TimelineGuide> {
           _syncFocusedProgramForChannel();
         });
         _scrollToFocusedChannel();
+      } else {
+        // At the top channel: navigate up into Category Header!
+        setState(() => _isCategoryFocused = true);
       }
       return KeyEventResult.handled;
     }
@@ -225,14 +335,6 @@ class _TimelineGuideState extends State<TimelineGuide> {
         k == LogicalKeyboardKey.goBack ||
         k == LogicalKeyboardKey.browserBack) {
       widget.onClose();
-      return KeyEventResult.handled;
-    }
-
-    // Green button or F2 or Key C cycles Category/Genre
-    if (k == LogicalKeyboardKey.f2 ||
-        k == LogicalKeyboardKey.contextMenu ||
-        k == LogicalKeyboardKey.keyC) {
-      _cycleCategory();
       return KeyEventResult.handled;
     }
 
@@ -389,27 +491,87 @@ class _TimelineGuideState extends State<TimelineGuide> {
 
           // Genre / Category Pill
           GestureDetector(
-            onTap: _cycleCategory,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+            onTap: _openCategoryDialog,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              padding: EdgeInsets.symmetric(
+                horizontal: _isCategoryFocused ? 14 : 12,
+                vertical: _isCategoryFocused ? 4 : 3,
+              ),
               decoration: BoxDecoration(
-                color: const Color(0xFF0F766E),
+                gradient: _isCategoryFocused
+                    ? const LinearGradient(
+                        colors: [Color(0xFF0284C7), Color(0xFF0369A1)],
+                      )
+                    : null,
+                color: _isCategoryFocused ? null : const Color(0xFF0F766E),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFF2DD4BF), width: 1),
+                border: Border.all(
+                  color: _isCategoryFocused ? const Color(0xFF38BDF8) : const Color(0xFF2DD4BF),
+                  width: _isCategoryFocused ? 2 : 1,
+                ),
+                boxShadow: _isCategoryFocused
+                    ? [
+                        BoxShadow(
+                          color: const Color(0xFF38BDF8).withValues(alpha: 0.6),
+                          blurRadius: 10,
+                          spreadRadius: 1,
+                        ),
+                      ]
+                    : null,
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_isCategoryFocused)
+                    const Icon(Icons.arrow_left_rounded, color: Colors.white, size: 18),
                   Text(
                     activeCat,
-                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: _isCategoryFocused ? FontWeight.w800 : FontWeight.w700,
+                    ),
                   ),
-                  const SizedBox(width: 6),
-                  const Icon(Icons.arrow_drop_down_rounded, color: Colors.white, size: 16),
+                  if (_isCategoryFocused)
+                    const Icon(Icons.arrow_right_rounded, color: Colors.white, size: 18)
+                  else ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.arrow_drop_down_rounded, color: Colors.white, size: 16),
+                  ],
+                  if (_isCategoryFocused) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'OK: All',
+                        style: TextStyle(color: Color(0xFFE0F2FE), fontSize: 10, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
+          if (!_isCategoryFocused) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+              ),
+              child: const Text(
+                '▲ Up: Category',
+                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
           const SizedBox(width: 14),
 
           // Date Text
@@ -617,7 +779,7 @@ class _TimelineGuideState extends State<TimelineGuide> {
       itemExtent: _rowHeight,
       itemBuilder: (context, rowIdx) {
         final ch = _activeCategoryChannels[rowIdx];
-        final isFocused = rowIdx == _focusedChannelIdx;
+        final isFocused = !_isCategoryFocused && rowIdx == _focusedChannelIdx;
 
         // Fetch programs for this channel within timeline window
         final progs = EpgProvider.instance.getSchedule(ch, from: windowStart, to: windowEnd);
@@ -844,17 +1006,27 @@ class _TimelineGuideState extends State<TimelineGuide> {
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       color: const Color(0xFF05080E),
-      child: const Row(
+      child: Row(
         children: [
-          _KeyHint(icon: Icons.unfold_more_rounded, text: 'Ch Up/Down'),
-          SizedBox(width: 14),
-          _KeyHint(icon: Icons.swap_horiz_rounded, text: 'Shows Left/Right'),
-          SizedBox(width: 14),
-          _KeyHint(icon: Icons.info_outline_rounded, text: 'OK / Info: Details & Tune'),
-          SizedBox(width: 14),
-          _ColorHint(color: Color(0xFF10B981), text: 'Other Genres (C)'),
-          Spacer(),
-          _KeyHint(icon: Icons.keyboard_return_rounded, text: 'Back: Close'),
+          if (_isCategoryFocused) ...[
+            const _KeyHint(icon: Icons.swap_horiz_rounded, text: '◄/►: Switch Category'),
+            const SizedBox(width: 14),
+            const _KeyHint(icon: Icons.list_rounded, text: 'OK: All Categories List'),
+            const SizedBox(width: 14),
+            const _KeyHint(icon: Icons.arrow_downward_rounded, text: 'Down: Return to Channels'),
+            const Spacer(),
+            const _KeyHint(icon: Icons.keyboard_return_rounded, text: 'Back: Channels'),
+          ] else ...[
+            const _KeyHint(icon: Icons.unfold_more_rounded, text: 'Ch Up/Down'),
+            const SizedBox(width: 14),
+            const _KeyHint(icon: Icons.swap_horiz_rounded, text: 'Shows Left/Right'),
+            const SizedBox(width: 14),
+            const _KeyHint(icon: Icons.info_outline_rounded, text: 'OK: Details & Tune'),
+            const SizedBox(width: 14),
+            const _KeyHint(icon: Icons.arrow_upward_rounded, text: 'Up at top: Category (◄/► or OK)'),
+            const Spacer(),
+            const _KeyHint(icon: Icons.keyboard_return_rounded, text: 'Back: Close'),
+          ],
         ],
       ),
     );
@@ -896,25 +1068,6 @@ class _KeyHint extends StatelessWidget {
         Icon(icon, size: 13, color: const Color(0xFF94A3B8)),
         const SizedBox(width: 4),
         Text(text, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w600)),
-      ],
-    );
-  }
-}
-
-class _ColorHint extends StatelessWidget {
-  final Color color;
-  final String text;
-
-  const _ColorHint({required this.color, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 6),
-        Text(text, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11, fontWeight: FontWeight.w600)),
       ],
     );
   }
