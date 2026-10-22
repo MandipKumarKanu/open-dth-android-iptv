@@ -1,3 +1,4 @@
+// ignore_for_file: invalid_use_of_visible_for_testing_member
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -191,6 +192,7 @@ class _PlayerState extends State<Player> {
       final prefLang = PlayerSettingsProvider.instance.preferredAudioLanguage;
       if (prefLang.isNotEmpty) {
         AudioTrackService.setPreferredAudioLanguage(
+          playerId: c.playerId,
           language: prefLang,
         );
       }
@@ -200,7 +202,7 @@ class _PlayerState extends State<Player> {
       // multiple media chunks in memory, preventing buffering on transient network jitter.
       Future.delayed(const Duration(milliseconds: 1400), () {
         if (mounted && gen == _generation && controller == c) {
-          AudioTrackService.enableLiveBufferWindow(offsetMs: 18000);
+          AudioTrackService.enableLiveBufferWindow(playerId: c.playerId, offsetMs: 18000);
         }
       });
 
@@ -218,7 +220,7 @@ class _PlayerState extends State<Player> {
 
   Future<void> _refreshAudioTracks(VideoPlayerController c, int gen, [int retryCount = 0]) async {
     try {
-      final tracks = await AudioTrackService.getAudioTracks();
+      final tracks = await AudioTrackService.getAudioTracks(playerId: c.playerId);
       if (gen != _generation) return;
       if (tracks.isNotEmpty) {
         final active = tracks.where((t) => t.isSelected).firstOrNull ?? tracks.first;
@@ -228,20 +230,16 @@ class _PlayerState extends State<Player> {
             _selectedAudioTrack = active;
           });
         }
-      } else if (retryCount < 4) {
-        // HLS manifests may take a split-second to parse on ExoPlayer
-        Future.delayed(const Duration(milliseconds: 600), () {
+      }
+      // HLS manifests load alternative audio renditions asynchronously over 1-3 seconds.
+      // If we have <= 1 track, keep polling up to 5 times (total ~3.5 seconds)
+      // to pick up alternative audio renditions as soon as ExoPlayer registers them.
+      if (retryCount < 5 && tracks.length <= 1) {
+        Future.delayed(const Duration(milliseconds: 700), () {
           if (mounted && gen == _generation && controller == c) {
             _refreshAudioTracks(c, gen, retryCount + 1);
           }
         });
-      } else {
-        if (mounted && gen == _generation) {
-          setState(() {
-            _audioTracks = [];
-            _selectedAudioTrack = null;
-          });
-        }
       }
     } catch (_) {}
   }
@@ -250,6 +248,7 @@ class _PlayerState extends State<Player> {
     final c = controller;
     if (c == null) return;
     final success = await AudioTrackService.selectAudioTrack(
+      playerId: c.playerId,
       groupIndex: track.groupIndex,
       trackIndex: track.trackIndex,
     );
@@ -268,7 +267,7 @@ class _PlayerState extends State<Player> {
     final c = controller;
     if (_audioTracks.isEmpty && c != null && c.value.isInitialized) {
       try {
-        final tracks = await AudioTrackService.getAudioTracks();
+        final tracks = await AudioTrackService.getAudioTracks(playerId: c.playerId);
         if (mounted && tracks.isNotEmpty) {
           setState(() {
             _audioTracks = tracks;

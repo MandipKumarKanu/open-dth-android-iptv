@@ -53,19 +53,23 @@ class MainActivity: FlutterActivity() {
             when (call.method) {
                 "getAudioTracks" -> {
                     if (exoPlayer == null) {
+                        android.util.Log.w("MainActivity", "getAudioTracks: ExoPlayer not found for playerId=$playerId")
                         result.success(emptyList<Map<String, Any?>>())
                         return@setMethodCallHandler
                     }
                     try {
                         val tracksList = mutableListOf<Map<String, Any?>>()
                         val tracks = exoPlayer.currentTracks
+                        android.util.Log.d("MainActivity", "getAudioTracks: total groups=${tracks.groups.size}")
                         for (groupIndex in 0 until tracks.groups.size) {
                             val group = tracks.groups[groupIndex]
+                            android.util.Log.d("MainActivity", "  group $groupIndex: type=${group.type}, len=${group.length}")
                             if (group.type == C.TRACK_TYPE_AUDIO) {
                                 for (trackIndex in 0 until group.length) {
                                     val format = group.getTrackFormat(trackIndex)
                                     val isSelected = group.isTrackSelected(trackIndex)
                                     val isSupported = group.isTrackSupported(trackIndex)
+                                    android.util.Log.d("MainActivity", "    audio track $trackIndex: id=${format.id}, lang=${format.language}, label=${format.label}, sel=$isSelected, sup=$isSupported")
                                     val trackMap = hashMapOf<String, Any?>(
                                         "groupIndex" to groupIndex,
                                         "trackIndex" to trackIndex,
@@ -82,8 +86,10 @@ class MainActivity: FlutterActivity() {
                                 }
                             }
                         }
+                        android.util.Log.d("MainActivity", "getAudioTracks: returning ${tracksList.size} tracks")
                         result.success(tracksList)
                     } catch (e: Exception) {
+                        android.util.Log.e("MainActivity", "getAudioTracks error: ${e.message}", e)
                         result.error("TRACK_ERROR", "Failed to get audio tracks: ${e.message}", null)
                     }
                 }
@@ -196,8 +202,8 @@ class MainActivity: FlutterActivity() {
                 playerObj = players.get(playerId)
             }
             if (playerObj == null && players.size() > 0) {
-                // In Live TV, fallback to the single active player
-                playerObj = players.valueAt(0)
+                // In Live TV, fallback to the latest active player
+                playerObj = players.valueAt(players.size() - 1)
             }
             if (playerObj == null) return null
 

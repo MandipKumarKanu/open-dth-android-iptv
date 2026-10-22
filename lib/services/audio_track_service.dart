@@ -121,7 +121,6 @@ class AudioTrackService {
         return res
             .whereType<Map>()
             .map((e) => AudioTrack.fromMap(e))
-            .where((t) => t.isSupported)
             .toList();
       }
     } catch (_) {}
