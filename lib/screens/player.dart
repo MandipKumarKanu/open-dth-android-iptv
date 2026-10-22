@@ -20,7 +20,7 @@ import '../widgets/tv_audio_track_dialog.dart';
 import '../widgets/tv_search_dialog.dart';
 import 'home.dart' show isSelectKey;
 
-enum ControlSection { playPause, recall, quality, screenFit, audioTrack }
+enum ControlSection { playPause, recall, quality, screenFit, audioTrack, epgGuide }
 
 /// Full-screen live player.
 /// ◀ (Left) opens Mini-Guide, OK toggles DTH Timeline Guide,
@@ -682,6 +682,8 @@ class _PlayerState extends State<Player> {
         } else if (_controlSection == ControlSection.audioTrack) {
           setState(() => _controlSection = ControlSection.screenFit);
         } else if (_controlSection == ControlSection.screenFit) {
+          setState(() => _controlSection = ControlSection.epgGuide);
+        } else if (_controlSection == ControlSection.epgGuide) {
           setState(() => _controlSection = ControlSection.playPause);
         } else if (_controlSection == ControlSection.playPause && _previousChannel != null) {
           setState(() => _controlSection = ControlSection.recall);
@@ -700,6 +702,8 @@ class _PlayerState extends State<Player> {
         } else if (_controlSection == ControlSection.recall) {
           setState(() => _controlSection = ControlSection.playPause);
         } else if (_controlSection == ControlSection.playPause) {
+          setState(() => _controlSection = ControlSection.epgGuide);
+        } else if (_controlSection == ControlSection.epgGuide) {
           setState(() => _controlSection = ControlSection.screenFit);
         } else if (_controlSection == ControlSection.screenFit && _audioTracks.isNotEmpty) {
           setState(() => _controlSection = ControlSection.audioTrack);
@@ -725,6 +729,8 @@ class _PlayerState extends State<Player> {
           if (prev != null) {
             _tuneToChannel(prev);
           }
+        } else if (_controlSection == ControlSection.epgGuide) {
+          _openTimelineGuide();
         } else if (_controlSection == ControlSection.screenFit) {
           _toggleScreenFit();
         } else if (_controlSection == ControlSection.audioTrack) {
@@ -819,16 +825,14 @@ class _PlayerState extends State<Player> {
           DateTime.now().difference(_lastInfoClose) < const Duration(milliseconds: 350)) {
         return KeyEventResult.handled;
       }
-      if (!showInfo) {
-        // 1st press: show Info Bar
-        setState(_flashInfo);
-      } else {
-        // 2nd press while Info Bar is already visible: open full DTH Timeline Guide!
-        _openTimelineGuide();
-      }
+      _openControls();
       return KeyEventResult.handled;
     } else if (k == LogicalKeyboardKey.arrowRight) {
-      setState(_flashInfo);
+      if (!showInfo) {
+        setState(_flashInfo);
+      } else {
+        _openTimelineGuide();
+      }
       return KeyEventResult.handled;
     } else {
       return KeyEventResult.ignored;
@@ -1266,6 +1270,8 @@ class _PlayerState extends State<Player> {
                     ],
                     _buildPlayPauseButton(isPlaying, c),
                     const SizedBox(width: 32),
+                    _buildTimelineGuideButton(),
+                    const SizedBox(width: 32),
                     _buildScreenFitButton(),
                     if (_audioTracks.isNotEmpty) ...[
                       const SizedBox(width: 32),
@@ -1426,6 +1432,63 @@ class _PlayerState extends State<Player> {
               fontSize: 12,
               fontWeight: FontWeight.w800,
               letterSpacing: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimelineGuideButton() {
+    final isFocused = _controlSection == ControlSection.epgGuide;
+    return GestureDetector(
+      onTap: () {
+        _openTimelineGuide();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isFocused ? const Color(0xFF6366F1) : const Color(0x33FFFFFF),
+              boxShadow: isFocused
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFF6366F1).withValues(alpha: 0.8),
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                      ),
+                    ]
+                  : [],
+              border: Border.all(
+                color: isFocused ? Colors.white : const Color(0x66FFFFFF),
+                width: 2,
+              ),
+            ),
+            child: const Icon(
+              Icons.view_timeline_rounded,
+              size: 38,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 140),
+            child: Text(
+              'TV GUIDE',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isFocused ? Colors.white : Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.2,
+              ),
             ),
           ),
         ],
