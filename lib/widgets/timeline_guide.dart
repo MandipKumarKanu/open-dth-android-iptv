@@ -401,6 +401,10 @@ class _TimelineGuideState extends State<TimelineGuide> {
         ? focusedProgs[_focusedProgIdx]
         : currentProgram;
 
+    if (MediaQuery.sizeOf(context).shortestSide < 600) {
+      return _buildMobileGuide(activeCat, now);
+    }
+
     return Focus(
       focusNode: _focusNode,
       autofocus: true,
@@ -448,6 +452,189 @@ class _TimelineGuideState extends State<TimelineGuide> {
 
             // 5. Bottom Remote Help / Action Bar
             _buildBottomBar(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _selectMobileCategory(int index) {
+    if (index < 0 || index >= _categories.length) return;
+    setState(() {
+      _selectedCategoryIdx = index;
+      _focusedChannelIdx = 0;
+      _isCategoryFocused = false;
+      _updateChannelsForCategory();
+      _syncFocusedProgramForChannel();
+    });
+    widget.onUserActivity();
+  }
+
+  Widget _buildMobileGuide(String activeCat, DateTime now) {
+    final size = MediaQuery.sizeOf(context);
+    final currentCategoryChannels = _activeCategoryChannels;
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xF50A0E17),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+        border: Border(top: BorderSide(color: Colors.cyan.withValues(alpha: 0.55), width: 1.5)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.8),
+            blurRadius: 20,
+            spreadRadius: 4,
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 8, 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.live_tv_rounded, color: Color(0xFF38BDF8), size: 19),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Channel guide',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Text(
+                    '${currentCategoryChannels.length} channels',
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    tooltip: 'Close guide',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: widget.onClose,
+                    icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 42,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                itemCount: _categories.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 7),
+                itemBuilder: (context, i) {
+                  final selected = i == _selectedCategoryIdx;
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _selectMobileCategory(i),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 130),
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: selected ? const Color(0xFF38BDF8) : const Color(0x18FFFFFF),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: selected ? const Color(0xFF38BDF8) : const Color(0x24FFFFFF),
+                        ),
+                      ),
+                      child: Text(
+                        _categories[i],
+                        style: TextStyle(
+                          color: selected ? Colors.black : Colors.white,
+                          fontSize: 12,
+                          fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const Divider(color: Color(0x20FFFFFF), height: 12),
+            Expanded(
+              child: currentCategoryChannels.isEmpty
+                  ? const Center(
+                      child: Text('No channels in this category', style: TextStyle(color: Colors.white54)),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(12, 2, 12, 12),
+                      itemCount: currentCategoryChannels.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 6),
+                      itemBuilder: (context, i) {
+                        final ch = currentCategoryChannels[i];
+                        final isPlaying = ch.idKey == widget.currentChannel.idKey;
+                        final prog = EpgProvider.instance.getNow(ch);
+                        return Material(
+                          color: isPlaying ? const Color(0x2438BDF8) : const Color(0x14FFFFFF),
+                          borderRadius: BorderRadius.circular(10),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () {
+                              widget.onUserActivity();
+                              widget.onTune(ch);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              child: Row(
+                                children: [
+                                  ChannelIcon(channel: ch, width: 54, height: 34),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                ch.name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                            if (isPlaying)
+                                              const Text(
+                                                'PLAYING',
+                                                style: TextStyle(
+                                                  color: Color(0xFF38BDF8),
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w900,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          prog?.title ?? ch.category,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(color: Colors.white60, fontSize: 11),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Icon(
+                                    isPlaying ? Icons.graphic_eq_rounded : Icons.play_circle_outline_rounded,
+                                    color: isPlaying ? const Color(0xFF38BDF8) : Colors.white54,
+                                    size: 22,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
           ],
         ),
       ),
