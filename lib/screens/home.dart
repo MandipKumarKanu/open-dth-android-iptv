@@ -117,7 +117,12 @@ class Home extends StatefulWidget {
 /// Category sidebar on the left, channel grid on the right. D-pad movement is handled
 /// explicitly (not by Flutter's geometric focus search) so it is predictable.
 class _HomeState extends State<Home> {
-  static const cols = 6;
+  int get cols {
+    final width = MediaQuery.sizeOf(context).width;
+    if (width < 600) return 2;
+    if (width < 1100) return 4;
+    return 6;
+  }
 
   final provider = ChannelsProvider();
 
@@ -848,13 +853,129 @@ class _HomeState extends State<Home> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < 720;
     return Scaffold(
       backgroundColor: bg,
-      body: Row(
+      body: SafeArea(
+        child: isMobile
+            ? Column(
+                children: [
+                  _mobileTopBar(),
+                  _mobileCategoryBar(),
+                  Expanded(child: _content(mobile: true)),
+                ],
+              )
+            : Row(
+                children: [
+                  _sidebar(),
+                  Expanded(child: _content()),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _mobileTopBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 12, 6),
+      child: Row(
         children: [
-          _sidebar(),
-          Expanded(child: _content()),
+          Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE53935),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: const Icon(Icons.live_tv_rounded, size: 20, color: Colors.white),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Open DTH',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Search channels',
+            onPressed: _openSearchDialog,
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xFF1E293B),
+              foregroundColor: const Color(0xFF38BDF8),
+              minimumSize: const Size(46, 46),
+            ),
+            icon: const Icon(Icons.search_rounded),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _mobileCategoryBar() {
+    if (categories.isEmpty) return const SizedBox(height: 8);
+    return SizedBox(
+      height: 48,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+        itemCount: categories.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final isSelected = i == selected;
+          final label = categories[i];
+          return Semantics(
+            button: true,
+            selected: isSelected,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                _switchTimer?.cancel();
+                _selectCategory(i);
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  color: isSelected ? Colors.white : const Color(0xFF1B1B24),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(
+                    color: isSelected ? Colors.white : const Color(0x28FFFFFF),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _icons[label] ?? Icons.tv_rounded,
+                      size: 16,
+                      color: isSelected ? Colors.black : const Color(0xFFB4B4BE),
+                    ),
+                    const SizedBox(width: 7),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: isSelected ? Colors.black : Colors.white,
+                        fontSize: 13,
+                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      ),
+                    ),
+                    if (label == 'Favorites' && (byCategory[label]?.isNotEmpty ?? false)) ...[
+                      const SizedBox(width: 5),
+                      Text(
+                        '${byCategory[label]!.length}',
+                        style: TextStyle(
+                          color: isSelected ? Colors.black54 : dim,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -915,7 +1036,7 @@ class _HomeState extends State<Home> {
     );
   }
 
-  Widget _content() {
+  Widget _content({bool mobile = false}) {
     if (loading && categories.isEmpty) {
       return const Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -934,27 +1055,62 @@ class _HomeState extends State<Home> {
       children: [
         // Category title, count, resolution tag & language dropdown button
         Padding(
-          padding: const EdgeInsets.fromLTRB(28, 22, 28, 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Text(categories[selected],
-                  style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700)),
-              const SizedBox(width: 12),
-              Text('${list.length} channels', style: const TextStyle(color: dim, fontSize: 13)),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                    border: Border.all(color: dim.withValues(alpha: 0.5)),
-                    borderRadius: BorderRadius.circular(4)),
-                child: const Text('FHD · HD',
-                    style: TextStyle(color: dim, fontSize: 10, fontWeight: FontWeight.w600)),
-              ),
-              const Spacer(),
-              _buildLanguageDropdownButton(),
-            ],
-          ),
+          padding: EdgeInsets.fromLTRB(mobile ? 16 : 28, mobile ? 10 : 22, mobile ? 16 : 28, mobile ? 8 : 12),
+          child: mobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            categories[selected],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('${list.length} channels', style: const TextStyle(color: dim, fontSize: 12)),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: dim.withValues(alpha: 0.45)),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text('FHD · HD', style: TextStyle(color: dim, fontSize: 10, fontWeight: FontWeight.w600)),
+                        ),
+                        const Spacer(),
+                        _buildLanguageDropdownButton(),
+                      ],
+                    ),
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(categories[selected],
+                        style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700)),
+                    const SizedBox(width: 12),
+                    Text('${list.length} channels', style: const TextStyle(color: dim, fontSize: 13)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                          border: Border.all(color: dim.withValues(alpha: 0.5)),
+                          borderRadius: BorderRadius.circular(4)),
+                      child: const Text('FHD · HD',
+                          style: TextStyle(color: dim, fontSize: 10, fontWeight: FontWeight.w600)),
+                    ),
+                    const Spacer(),
+                    _buildLanguageDropdownButton(),
+                  ],
+                ),
         ),
 
         Expanded(
