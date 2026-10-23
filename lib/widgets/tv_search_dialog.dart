@@ -27,6 +27,7 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
   final FocusNode _keyboardFocus = FocusNode();
   final FocusNode _gridFocus = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _mobileSearchController = TextEditingController();
 
   int _kbRow = 0;
   int _kbCol = 0;
@@ -69,6 +70,10 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
       _isListening = false;
       if (text != null && text.trim().isNotEmpty) {
         _query = text.trim().toUpperCase();
+        _mobileSearchController.value = TextEditingValue(
+          text: _query,
+          selection: TextSelection.collapsed(offset: _query.length),
+        );
         _voiceHeardText = text.trim();
         final results = _filteredChannels;
         if (results.isNotEmpty) {
@@ -262,17 +267,29 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
   }
 
   @override
+  void dispose() {
+    _keyboardFocus.dispose();
+    _gridFocus.dispose();
+    _scrollController.dispose();
+    _mobileSearchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final results = _filteredChannels;
+    final isMobile = MediaQuery.sizeOf(context).shortestSide < 600;
 
     return Focus(
       focusNode: _inResults ? _gridFocus : _keyboardFocus,
       autofocus: true,
-      onKeyEvent: _handleKey,
+      onKeyEvent: isMobile ? null : _handleKey,
       child: Scaffold(
         backgroundColor: const Color(0xFA090D16),
         body: SafeArea(
-          child: Padding(
+          child: isMobile
+              ? _buildMobileSearchLayout(results)
+              : Padding(
             padding: const EdgeInsets.fromLTRB(28, 20, 28, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -538,6 +555,174 @@ class _TvSearchDialogState extends State<TvSearchDialog> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildMobileSearchLayout(List<Channel> results) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.search_rounded, color: Color(0xFF38BDF8), size: 24),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Search channels',
+                  style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w800),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Voice search',
+                onPressed: _triggerVoiceSearch,
+                icon: Icon(
+                  Icons.mic_rounded,
+                  color: _isListening ? const Color(0xFFFB7185) : const Color(0xFF2DD4BF),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Close search',
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded, color: Colors.white70),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _mobileSearchController,
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            onChanged: (value) => setState(() => _query = value),
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+            decoration: InputDecoration(
+              hintText: 'Name, category or channel ID',
+              hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
+              prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF38BDF8)),
+              suffixIcon: _query.isNotEmpty
+                  ? IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        _mobileSearchController.clear();
+                        setState(() => _query = '');
+                      },
+                      icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                    )
+                  : null,
+              filled: true,
+              fillColor: const Color(0xFF151D2B),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0x2238BDF8)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0x2238BDF8)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0xFF38BDF8), width: 1.5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_voiceHeardText != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Voice search: “$_voiceHeardText”',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Color(0xFF2DD4BF), fontSize: 12),
+              ),
+            ),
+          Expanded(
+            child: _query.trim().isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.live_tv_rounded, color: Colors.white24, size: 44),
+                        SizedBox(height: 10),
+                        Text(
+                          'Search for your favourite channel',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white54, fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  )
+                : results.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No matching channels found',
+                          style: TextStyle(color: Colors.white54, fontSize: 14),
+                        ),
+                      )
+                    : ListView.separated(
+                        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                        itemCount: results.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, i) {
+                          final ch = results[i];
+                          return Material(
+                            color: const Color(0xFF151D2B),
+                            borderRadius: BorderRadius.circular(12),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                widget.onChannelSelect(ch);
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                child: Row(
+                                  children: [
+                                    ChannelIcon(
+                                      key: ValueKey(ch.logoUrl + ch.name),
+                                      channel: ch,
+                                      width: 58,
+                                      height: 38,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            ch.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            '${ch.category} · ${ch.resolution}',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.play_circle_outline_rounded, color: Color(0xFF38BDF8)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+        ],
       ),
     );
   }
