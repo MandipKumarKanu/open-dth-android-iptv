@@ -12,7 +12,7 @@
 
 ---
 
-**Open DTH Android IPTV** is a lightweight, hardware-accelerated live TV player for Android TV, Google TV, and Android phones. Built with Flutter and Google's Media3 ExoPlayer, it offers a classic Indian Set-Top-Box (STB) experience on TVs, plus a responsive touch layout on phones with tap-to-play channel cards, native channel search, compact playback controls, and swipe gestures for changing channels. It plays public streams over Wi-Fi.
+**Open DTH Android IPTV** is a lightweight, hardware-accelerated live TV player for Android TV, Google TV, and Android phones. The app runs in landscape orientation on Android devices. Built with Flutter and Google's Media3 ExoPlayer, it offers a classic Indian Set-Top-Box (STB) experience on TVs, plus a responsive touch layout on phones with tap-to-play channel cards, native channel search, compact playback controls, a touch-friendly channel guide, and swipe gestures for changing channels. It plays public streams over Wi-Fi.
 
 | | |
 |---|---|
