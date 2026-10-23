@@ -2,6 +2,8 @@ name: Build and Release Android APKs
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -57,6 +59,7 @@ jobs:
           cp build/app/outputs/flutter-apk/app-release.apk open-dth-android-iptv-arm64-v8a.apk
 
       - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           name: Open DTH Android IPTV ${{ github.ref_name }}
