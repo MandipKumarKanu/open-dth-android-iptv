@@ -968,12 +968,30 @@ class _PlayerState extends State<Player> {
             children: [
               if (ready)
                 Positioned.fill(
-                  child: FittedBox(
-                    fit: PlayerSettingsProvider.instance.screenFit.boxFit,
-                    child: SizedBox(
-                      width: c.value.size.width > 0 ? c.value.size.width : 16,
-                      height: c.value.size.height > 0 ? c.value.size.height : 9,
-                      child: VideoPlayer(c),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (MediaQuery.sizeOf(context).shortestSide >= 600) return;
+                      if (showControls) {
+                        controlsTimer?.cancel();
+                        setState(() => showControls = false);
+                      } else {
+                        _openControls();
+                      }
+                    },
+                    onVerticalDragEnd: (details) {
+                      if (MediaQuery.sizeOf(context).shortestSide >= 600) return;
+                      final velocity = details.primaryVelocity ?? 0;
+                      if (velocity.abs() < 350) return;
+                      _zap(velocity < 0 ? 1 : -1);
+                    },
+                    child: FittedBox(
+                      fit: PlayerSettingsProvider.instance.screenFit.boxFit,
+                      child: SizedBox(
+                        width: c.value.size.width > 0 ? c.value.size.width : 16,
+                        height: c.value.size.height > 0 ? c.value.size.height : 9,
+                        child: VideoPlayer(c),
+                      ),
                     ),
                   ),
                 ),
@@ -1235,6 +1253,9 @@ class _PlayerState extends State<Player> {
   Widget _buildControlsOverlay(VideoPlayerController? c) {
     final qList = availableQualities;
     final isPlaying = c != null && c.value.isPlaying;
+    if (MediaQuery.sizeOf(context).shortestSide < 600) {
+      return _buildMobileControlsOverlay(c, qList, isPlaying);
+    }
 
     return Container(
       decoration: const BoxDecoration(
@@ -1410,6 +1431,233 @@ class _PlayerState extends State<Player> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileControlsOverlay(
+    VideoPlayerController? c,
+    List<String> qList,
+    bool isPlaying,
+  ) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.62),
+      child: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 12, 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Back to channels',
+                    onPressed: () => Navigator.of(context).pop(index),
+                    icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE53935),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      'LIVE',
+                      style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      channel.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Voice search',
+                    onPressed: _openVoiceSearch,
+                    icon: const Icon(Icons.mic_rounded, color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+            if (qualityNotice != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Text(
+                  qualityNotice!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ),
+            const Spacer(),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _buildMobileAction(
+                    Icons.skip_previous_rounded,
+                    'Previous',
+                    () {
+                      _zap(-1);
+                      _resetControlsTimer();
+                    },
+                  ),
+                  _buildMobileAction(
+                    isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    isPlaying ? 'Pause' : 'Play',
+                    () {
+                      if (c != null && c.value.isInitialized) {
+                        c.value.isPlaying ? c.pause() : c.play();
+                        setState(() {});
+                        _resetControlsTimer();
+                      } else if (failed) {
+                        streamIdx = 0;
+                        _open();
+                      }
+                    },
+                    accent: const Color(0xFF38BDF8),
+                  ),
+                  _buildMobileAction(
+                    Icons.list_rounded,
+                    'Channels',
+                    () => _openGuide(),
+                  ),
+                  _buildMobileAction(
+                    Icons.skip_next_rounded,
+                    'Next',
+                    () {
+                      _zap(1);
+                      _resetControlsTimer();
+                    },
+                  ),
+                  _buildMobileAction(
+                    Icons.aspect_ratio_rounded,
+                    'Fit',
+                    () {
+                      _toggleScreenFit();
+                      _resetControlsTimer();
+                    },
+                  ),
+                  if (_audioTracks.length > 1)
+                    _buildMobileAction(
+                      Icons.audiotrack_rounded,
+                      'Audio',
+                      () {
+                        _openAudioTrackDialog();
+                        _resetControlsTimer();
+                      },
+                    ),
+                ],
+              ),
+            ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        'STREAM QUALITY',
+                        style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1),
+                      ),
+                      const Spacer(),
+                      Text(
+                        selectedQuality,
+                        style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: 11, fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final quality in qList) ...[
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              _setQuality(quality);
+                              _resetControlsTimer();
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 140),
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                              decoration: BoxDecoration(
+                                color: selectedQuality == quality ? Colors.white : const Color(0x33FFFFFF),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(
+                                  color: selectedQuality == quality ? Colors.white : const Color(0x44FFFFFF),
+                                ),
+                              ),
+                              child: Text(
+                                quality,
+                                style: TextStyle(
+                                  color: selectedQuality == quality ? Colors.black : Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${channel.category} · Swipe up/down to change channel',
+                    style: const TextStyle(color: Colors.white60, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileAction(
+    IconData icon,
+    String label,
+    VoidCallback onTap, {
+    Color accent = Colors.white,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      child: Material(
+        color: const Color(0x2AFFFFFF),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: SizedBox(
+            width: 66,
+            height: 72,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: accent, size: 28),
+                const SizedBox(height: 5),
+                Text(
+                  label,
+                  maxLines: 1,
+                  style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
