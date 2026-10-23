@@ -1143,7 +1143,9 @@ class _PlayerState extends State<Player> {
                   left: 0,
                   right: 0,
                   bottom: 0,
-                  height: 380,
+                  height: MediaQuery.sizeOf(context).shortestSide < 600
+                      ? MediaQuery.sizeOf(context).height * 0.86
+                      : 380,
                   child: TimelineGuide(
                     allChannels: allChannels,
                     currentChannel: channel,
