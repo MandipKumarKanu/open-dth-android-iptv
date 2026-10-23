@@ -279,7 +279,7 @@ class _MiniGuideState extends State<MiniGuide> {
       autofocus: true,
       onKeyEvent: _onKey,
       child: Container(
-        width: 380,
+        width: MediaQuery.sizeOf(context).shortestSide < 600 ? MediaQuery.sizeOf(context).width : 380,
         height: double.infinity,
         decoration: BoxDecoration(
           color: const Color(0xF2101018),
