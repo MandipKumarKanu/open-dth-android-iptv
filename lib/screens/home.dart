@@ -120,6 +120,7 @@ class _HomeState extends State<Home> {
   int get cols {
     final width = MediaQuery.sizeOf(context).width;
     if (width < 600) return 2;
+    if (width < 900) return 3;
     if (width < 1100) return 4;
     return 6;
   }
@@ -853,7 +854,8 @@ class _HomeState extends State<Home> {
 
   @override
   Widget build(BuildContext context) {
-    final isMobile = MediaQuery.sizeOf(context).width < 720;
+    final size = MediaQuery.sizeOf(context);
+    final isMobile = size.width < 720 || size.shortestSide < 600;
     return Scaffold(
       backgroundColor: bg,
       body: SafeArea(
