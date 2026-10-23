@@ -402,7 +402,7 @@ class _TimelineGuideState extends State<TimelineGuide> {
         : currentProgram;
 
     if (MediaQuery.sizeOf(context).shortestSide < 600) {
-      return _buildMobileGuide(activeCat, now);
+      return _buildMobileGuide();
     }
 
     return Focus(
@@ -470,8 +470,7 @@ class _TimelineGuideState extends State<TimelineGuide> {
     widget.onUserActivity();
   }
 
-  Widget _buildMobileGuide(String activeCat, DateTime now) {
-    final size = MediaQuery.sizeOf(context);
+  Widget _buildMobileGuide() {
     final currentCategoryChannels = _activeCategoryChannels;
     return Container(
       width: double.infinity,
