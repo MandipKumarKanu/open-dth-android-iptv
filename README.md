@@ -1,10 +1,10 @@
 # Open DTH Android IPTV
 
-<h3 align="center">A Native, Ultra-Fast Live TV & DTH Player for Android TV & Google TV</h3>
+<h3 align="center">A Native Live TV & DTH Player for Android TV, Google TV & Android Phones</h3>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
-  <a href="https://github.com/MandipKumarKanu/open-dth-android-iptv"><img src="https://img.shields.io/badge/platform-Android%20TV%20%7C%20Google%20TV-3DDC84.svg?style=flat-square&logo=android" alt="Platform: Android TV"></a>
+  <a href="https://github.com/MandipKumarKanu/open-dth-android-iptv"><img src="https://img.shields.io/badge/platform-Android%20TV%20%7C%20Google%20TV-3DDC84.svg?style=flat-square&logo=android" alt="Platform: Android TV, Google TV and Android Phones"></a>
   <img src="https://img.shields.io/badge/engine-Flutter%20%2B%20Media3%20ExoPlayer-02569B.svg?style=flat-square&logo=flutter" alt="Engine">
   <img src="https://img.shields.io/badge/channels-1%2C100%2B%20Live%20Streams-orange.svg?style=flat-square" alt="Channels">
   <a href="https://github.com/MandipKumarKanu"><img src="https://img.shields.io/badge/maintained%20by-Mandip%20Kumar%20Kanu-purple.svg?style=flat-square" alt="Maintainer"></a>
@@ -12,7 +12,7 @@
 
 ---
 
-**Open DTH Android IPTV** is a lightweight, hardware-accelerated TV application designed specifically for Android TV and Google TV sets. Built with Flutter and Google's Media3 ExoPlayer, it delivers a classic Indian Set-Top-Box (STB) experience (matching Tata Play and Airtel Digital TV) over Wi-Fi — with zero subscriptions, zero ads, and zero bloat.
+**Open DTH Android IPTV** is a lightweight, hardware-accelerated live TV player for Android TV, Google TV, and Android phones. Built with Flutter and Google's Media3 ExoPlayer, it offers a classic Indian Set-Top-Box (STB) experience on TVs, plus a responsive touch layout on phones with tap-to-play channel cards, native channel search, compact playback controls, and swipe gestures for changing channels. It plays public streams over Wi-Fi.
 
 | | |
 |---|---|
@@ -47,10 +47,13 @@
 - **18-Second Live Buffer Safety Window**: Automatically establishes a jitter safety window behind the live broadcast edge to prevent buffering stutters on home Wi-Fi networks.
 - **Auto-Fallback & Reconnect**: Automatically tries backup stream sources on temporary network drops without interrupting the user.
 
-### 4. TV Remote Ergonomics & Performance
+### 4. TV Remote, Touch Controls & Performance
+- **TV Remote Navigation**: D-pad focus, remote channel switching, and a TV-first layout remain available on Android TV and Google TV.
+- **Phone-Friendly Browsing**: Responsive channel grid, horizontally scrollable categories, language filtering, and a search screen that uses the phone keyboard.
+- **Touch Playback**: Tap the video to show playback controls, swipe up or down to change channels, and use on-screen buttons for play/pause, next/previous channel, channel guide, fit mode, audio, and quality.
 - **Aspect Ratio Control**: One-click screen fit toggle (*Fit, Fill, Zoom, 16:9 stretch*).
 - **Last Channel Recall**: Quick button to immediately flip back to the previous channel.
-- **60 FPS on 1 GB RAM Smart TVs**: Offstage category grid caching, disk-cached logos, and zero frame-dropping animation overhead.
+- **Low-Memory TV Tuning**: Channel lists are cached and built lazily to help low-memory smart TVs.
 
 ---
 
@@ -59,7 +62,7 @@
 ### Prerequisites
 - Flutter SDK (3.x+)
 - Android SDK & JDK 17
-- Android TV / Google TV device with USB/Network Debugging enabled
+- Android TV / Google TV device or Android phone
 
 ### 1. Build APK
 
