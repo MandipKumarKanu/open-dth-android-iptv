@@ -132,6 +132,7 @@ class _HomeState extends State<Home> {
   int selected = 0;
   bool loading = true;
   String? error;
+  bool _isAndroidTv = false;
 
   String selectedLanguage = 'All';
   final FocusNode _searchNode = FocusNode();
@@ -238,7 +239,23 @@ class _HomeState extends State<Home> {
   @override
   void initState() {
     super.initState();
+    _detectAndroidTv();
     _load();
+  }
+
+  static const MethodChannel _deviceChannel = MethodChannel('com.nk.live_tv/device');
+
+  Future<void> _detectAndroidTv() async {
+    try {
+      final isTv = await _deviceChannel.invokeMethod<bool>('isAndroidTv') ?? false;
+      if (mounted && isTv != _isAndroidTv) {
+        setState(() => _isAndroidTv = isTv);
+      }
+    } on PlatformException {
+      // Keep the size-based fallback for devices without the native channel.
+    } on MissingPluginException {
+      // Keep the size-based fallback for devices without the native channel.
+    }
   }
 
   @override
@@ -855,7 +872,9 @@ class _HomeState extends State<Home> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final isMobile = size.width < 720 || size.shortestSide < 600;
+    // Android TV can report a small logical shortestSide because of display density.
+    // Detect the TV form factor natively so it always gets the D-pad sidebar layout.
+    final isMobile = !_isAndroidTv && (size.width < 720 || size.shortestSide < 600);
     return Scaffold(
       backgroundColor: bg,
       body: SafeArea(
