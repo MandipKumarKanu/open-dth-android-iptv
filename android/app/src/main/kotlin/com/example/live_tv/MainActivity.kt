@@ -2,6 +2,7 @@ package com.nk.live_tv
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.speech.RecognizerIntent
 import androidx.media3.common.C
 import androidx.media3.common.TrackSelectionOverride
@@ -14,12 +15,23 @@ import io.flutter.plugins.videoplayer.VideoPlayerPlugin
 class MainActivity: FlutterActivity() {
     private val SPEECH_CHANNEL = "com.nk.live_tv/speech"
     private val AUDIO_CHANNEL = "com.nk.live_tv/audio_tracks"
+    private val DEVICE_CHANNEL = "com.nk.live_tv/device"
     private val SPEECH_REQUEST_CODE = 0x50EE
 
     private var pendingResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // 0. Device form-factor detection. TV detection must not rely on logical screen size.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isAndroidTv" -> result.success(
+                    packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+                )
+                else -> result.notImplemented()
+            }
+        }
 
         // 1. Voice Search Method Channel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SPEECH_CHANNEL).setMethodCallHandler { call, result ->
