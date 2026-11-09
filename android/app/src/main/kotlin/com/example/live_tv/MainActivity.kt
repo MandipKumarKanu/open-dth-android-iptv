@@ -30,7 +30,8 @@ class MainActivity: FlutterActivity() {
                 "isAndroidTv" -> result.success(
                     packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
                         (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
-                        Configuration.UI_MODE_TYPE_TELEVISION
+                        Configuration.UI_MODE_TYPE_TELEVISION ||
+                        !packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
                 )
                 else -> result.notImplemented()
             }
