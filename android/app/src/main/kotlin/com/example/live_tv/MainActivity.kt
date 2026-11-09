@@ -3,6 +3,7 @@ package com.nk.live_tv
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.speech.RecognizerIntent
 import androidx.media3.common.C
 import androidx.media3.common.TrackSelectionOverride
@@ -27,7 +28,9 @@ class MainActivity: FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "isAndroidTv" -> result.success(
-                    packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+                    packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+                        (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+                        Configuration.UI_MODE_TYPE_TELEVISION
                 )
                 else -> result.notImplemented()
             }
